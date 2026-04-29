@@ -5,6 +5,15 @@ export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
+      keyframes: {
+        transcriptIn: {
+          "0%": { opacity: "0", transform: "translateY(4px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+      },
+      animation: {
+        "transcript-in": "transcriptIn 0.28s ease-out forwards",
+      },
       colors: {
         room: {
           bg: "#0b1020",

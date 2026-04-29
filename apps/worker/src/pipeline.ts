@@ -9,6 +9,7 @@ import {
 } from "./constants";
 import { decodeBase64ToBytes, pcm16LeMonoToWavBase64 } from "./pcmToWav";
 import { shouldSkipSttForPcm } from "./pcmGate";
+import { stripTranslationArtifacts } from "./sanitize";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -185,11 +186,14 @@ export async function runAudioPipeline(
         try {
           const tr = (await env.AI.run(LLAMA_MODEL, {
             prompt: `Translate this ${sourceLang} text to ${targetLang}.
-Output ONLY the translation, no explanation.
-<text>${transcript}</text>`,
+Output ONLY the translation, no explanation or tags.
+
+---
+${transcript}
+---`,
             max_tokens: 500,
           })) as { response?: string };
-          translated = (tr.response ?? "").trim();
+          translated = stripTranslationArtifacts(tr.response ?? "");
         } catch (e) {
           console.error(
             JSON.stringify({

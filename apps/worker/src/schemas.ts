@@ -22,6 +22,12 @@ export const joinRoomBodySchema = z.object({
 
 export type JoinRoomBody = z.infer<typeof joinRoomBodySchema>;
 
+export const endRoomBodySchema = z.object({
+  participantId: participantIdSchema,
+});
+
+export type EndRoomBody = z.infer<typeof endRoomBodySchema>;
+
 export const audioChunkBodySchema = z.object({
   participantId: participantIdSchema,
   roomId: roomIdParamSchema,

@@ -1,4 +1,5 @@
 import type { Language } from "@babel-room/shared";
+import { stripTranslationArtifacts } from "./stripTranslationArtifacts";
 
 /** Normalize `translations` from WebSocket JSON (handles null / wrong shape). */
 export function parseTranscriptSegmentTranslations(
@@ -8,7 +9,7 @@ export function parseTranscriptSegmentTranslations(
   const out: Partial<Record<Language, string>> = {};
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
     if (typeof v !== "string") continue;
-    const t = v.trim();
+    const t = stripTranslationArtifacts(v);
     if (t.length > 0) out[k as Language] = t;
   }
   return out;

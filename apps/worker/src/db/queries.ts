@@ -6,6 +6,7 @@ export interface RoomRow {
   created_at: number;
   ended_at: number | null;
   participant_count: number;
+  host_participant_id: string | null;
 }
 
 export async function insertRoom(
@@ -72,6 +73,20 @@ export async function insertParticipant(
       )
       .bind(args.roomId),
   ]);
+}
+
+/** First joiner claims `rooms.host_participant_id` if still vacant. */
+export async function claimRoomHostIfVacant(
+  db: D1Database,
+  roomId: string,
+  participantId: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE rooms SET host_participant_id = ? WHERE id = ? AND host_participant_id IS NULL`,
+    )
+    .bind(participantId, roomId)
+    .run();
 }
 
 export interface ParticipantTranscriptionHints {

@@ -32,6 +32,8 @@ export interface JoinRoomResponse {
   participantId: string;
   wsUrl: string;
   createdAt: number;
+  /** True when this participant is the room host (first joiner); only host may end the call and load summary. */
+  isRoomHost?: boolean;
 }
 
 export async function joinRoom(
@@ -86,9 +88,14 @@ export interface EndRoomResponse {
   alreadyEnded: boolean;
 }
 
-export async function endRoom(roomId: string): Promise<EndRoomResponse> {
+export async function endRoom(
+  roomId: string,
+  participantId: string,
+): Promise<EndRoomResponse> {
   const res = await fetch(`${API_BASE}/api/rooms/${roomId}`, {
     method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ participantId }),
   });
   if (!res.ok) {
     logger.error("end_room_failed", { status: res.status });
@@ -105,12 +112,20 @@ export type RoomSummaryResponse =
       summary: string;
       segmentCount: number;
       generatedAt: number;
-    };
+    }
+  | { status: "forbidden" };
 
 export async function getRoomSummary(
   roomId: string,
+  participantId: string,
 ): Promise<RoomSummaryResponse> {
-  const res = await fetch(`${API_BASE}/api/rooms/${roomId}/summary`);
+  const q = new URLSearchParams({ participantId });
+  const res = await fetch(
+    `${API_BASE}/api/rooms/${roomId}/summary?${q.toString()}`,
+  );
+  if (res.status === 403) {
+    return { status: "forbidden" };
+  }
   if (!res.ok) {
     logger.error("get_summary_failed", { status: res.status });
     throw new Error("Failed to load summary");

@@ -142,6 +142,28 @@ describe("runAudioPipeline", () => {
     expect(meloArgs.prompt).toBe("hello");
   });
 
+  it("strips junk tags from translation model output", async () => {
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce({ text: "hola", detected_language: "es" })
+      .mockResolvedValueOnce({ response: "<xt>hello friend</ext>" })
+      .mockResolvedValueOnce({ audio: "bXAz" });
+    const env = makeEnv({ run } as unknown as Ai);
+    const chunk: AudioChunk = {
+      participantId: "p",
+      roomId: "abcd1234",
+      pcmBase64: makeTonePcmBase64(16_000),
+      sampleRateHz: 16_000,
+      sequenceNum: 9,
+      timestampMs: Date.now(),
+    };
+    const result = await runAudioPipeline(chunk, env, {
+      targetLanguages: ["en"],
+      spokenLanguageHint: "es",
+    });
+    expect(result.translations.en).toBe("hello friend");
+  });
+
   it("does not call Whisper for near-silence PCM", async () => {
     const run = vi.fn();
     const env = makeEnv({ run } as unknown as Ai);

@@ -4,6 +4,7 @@ import { cors } from "hono/cors";
 import type { AudioChunk, Language } from "@babel-room/shared";
 import { corsOriginCallback } from "./cors";
 import {
+  claimRoomHostIfVacant,
   getDistinctTargetLanguagesForRoom,
   getParticipantTranscriptionHints,
   getRoomById,
@@ -22,7 +23,9 @@ import {
   audioChunkBodySchema,
   devInjectTranslatedAudioBodySchema,
   devInjectTranscriptBodySchema,
+  endRoomBodySchema,
   joinRoomBodySchema,
+  participantIdSchema,
   roomIdParamSchema,
 } from "./schemas";
 import type { AppEnv } from "./middleware";
@@ -155,10 +158,19 @@ app.get("/api/rooms/:roomId", async (c) => {
     if (!room) {
       return structuredError(c, "NOT_FOUND", "Room not found", 404);
     }
-    return c.json(room, 200, {
-      "X-Request-Id": requestId,
-      "X-Pipeline-Duration-Ms": "0",
-    });
+    return c.json(
+      {
+        id: room.id,
+        created_at: room.created_at,
+        ended_at: room.ended_at,
+        participant_count: room.participant_count,
+      },
+      200,
+      {
+        "X-Request-Id": requestId,
+        "X-Pipeline-Duration-Ms": "0",
+      },
+    );
   } catch (e) {
     console.error(
       JSON.stringify({
@@ -186,6 +198,29 @@ app.get("/api/rooms/:roomId/summary", async (c) => {
     const room = await getRoomById(c.env.DB, roomId);
     if (!room) {
       return structuredError(c, "NOT_FOUND", "Room not found", 404);
+    }
+
+    const pidParse = participantIdSchema.safeParse(
+      c.req.query("participantId") ?? "",
+    );
+    if (!pidParse.success) {
+      return structuredError(
+        c,
+        "INVALID_BODY",
+        "participantId query parameter is required",
+        400,
+      );
+    }
+    if (
+      !room.host_participant_id ||
+      room.host_participant_id !== pidParse.data
+    ) {
+      return structuredError(
+        c,
+        "FORBIDDEN",
+        "Only the room host can view call notes",
+        403,
+      );
     }
 
     const key = `rooms/${roomId}/summary.json`;
@@ -272,6 +307,9 @@ app.post("/api/rooms/:roomId/join", async (c) => {
       targetLang: body.targetLang,
       joinedAt: Date.now(),
     });
+    await claimRoomHostIfVacant(c.env.DB, roomId, participantId);
+    const roomAfter = await getRoomById(c.env.DB, roomId);
+    const isRoomHost = roomAfter?.host_participant_id === participantId;
 
     const url = new URL(c.req.url);
     const wsProto = url.protocol === "https:" ? "wss:" : "ws:";
@@ -295,7 +333,12 @@ app.post("/api/rooms/:roomId/join", async (c) => {
     );
 
     return c.json(
-      { participantId, wsUrl, createdAt: room.created_at },
+      {
+        participantId,
+        wsUrl,
+        createdAt: room.created_at,
+        isRoomHost: Boolean(isRoomHost),
+      },
       200,
       {
         "X-Request-Id": requestId,
@@ -500,9 +543,33 @@ app.delete("/api/rooms/:roomId", async (c) => {
     }
     const roomId = roomIdParse.data;
 
+    const bodyUnknown = await c.req.json().catch(() => null);
+    const bodyParse = endRoomBodySchema.safeParse(bodyUnknown);
+    if (!bodyParse.success) {
+      return structuredError(
+        c,
+        "INVALID_BODY",
+        bodyParse.error.message,
+        400,
+      );
+    }
+    const { participantId: enderId } = bodyParse.data;
+
     const room = await getRoomById(c.env.DB, roomId);
     if (!room) {
       return structuredError(c, "NOT_FOUND", "Room not found", 404);
+    }
+
+    if (
+      !room.host_participant_id ||
+      room.host_participant_id !== enderId
+    ) {
+      return structuredError(
+        c,
+        "FORBIDDEN",
+        "Only the room host can end the call",
+        403,
+      );
     }
 
     if (room.ended_at != null) {

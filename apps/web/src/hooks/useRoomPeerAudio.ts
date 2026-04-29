@@ -36,6 +36,8 @@ export function useRoomPeerAudio(options: {
   ttsIsPlaying: boolean;
   remoteAudioRef: RefObject<HTMLAudioElement | null>;
   iceServers: RTCIceServer[];
+  /** Increment to tear down and rebuild the peer connection (new offer/answer). */
+  resetSignal?: number;
 }): {
   handleSignalingMessage: (msg: WSMessageType) => void;
   peerConnectionState: RTCPeerConnectionState | null;
@@ -54,6 +56,7 @@ export function useRoomPeerAudio(options: {
     ttsIsPlaying,
     remoteAudioRef,
     iceServers,
+    resetSignal = 0,
   } = options;
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -258,6 +261,7 @@ export function useRoomPeerAudio(options: {
     sendRoomMessage,
     teardownPc,
     applySignal,
+    resetSignal,
   ]);
 
   useEffect(() => {

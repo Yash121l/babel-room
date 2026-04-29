@@ -75,6 +75,8 @@ export function Room(): JSX.Element {
   const [endCallBusy, setEndCallBusy] = useState(false);
   const [endCallError, setEndCallError] = useState<string | null>(null);
   const [copyDone, setCopyDone] = useState(false);
+  const [isRoomHost, setIsRoomHost] = useState(false);
+  const [webrtcReset, setWebrtcReset] = useState(0);
   const [transcriptMode, setTranscriptMode] = useState<"mine" | "original">("mine");
   /** What you want to hear: both live + AI, live people only, or AI translation only. */
   const [listeningMode, setListeningMode] = useState<"both" | "peer" | "ai">("both");
@@ -226,6 +228,7 @@ export function Room(): JSX.Element {
     ttsIsPlaying: translationTtsIsPlaying,
     remoteAudioRef,
     iceServers,
+    resetSignal: webrtcReset,
   });
 
   useLayoutEffect(() => {
@@ -283,6 +286,15 @@ export function Room(): JSX.Element {
         if (joinKey !== joinKeyRef.current) return;
         setParticipantId(res.participantId);
         setWsUrl(res.wsUrl);
+        setIsRoomHost(res.isRoomHost === true);
+        try {
+          sessionStorage.setItem(
+            `babel-room:${roomId}:participantId`,
+            res.participantId,
+          );
+        } catch {
+          /* ignore quota */
+        }
         setJoinError(null);
       } catch {
         if (joinKey !== joinKeyRef.current) return;
@@ -318,6 +330,15 @@ export function Room(): JSX.Element {
       if (joinKey !== joinKeyRef.current) return;
       setParticipantId(res.participantId);
       setWsUrl(res.wsUrl);
+      setIsRoomHost(res.isRoomHost === true);
+      try {
+        sessionStorage.setItem(
+          `babel-room:${roomId}:participantId`,
+          res.participantId,
+        );
+      } catch {
+        /* ignore quota */
+      }
       setShowJoinForm(false);
     } catch {
       if (joinKey !== joinKeyRef.current) return;
@@ -350,20 +371,21 @@ export function Room(): JSX.Element {
   }, [clearTranslationAudioQueue, disposeTranslationAudio]);
 
   const onConfirmEndCall = useCallback(async (): Promise<void> => {
+    if (!participantId) return;
     setEndCallError(null);
     setEndCallBusy(true);
     try {
-      await endRoom(roomId);
+      await endRoom(roomId, participantId);
       setMicSessionActive(false);
       await stopPlayback();
       setEndDialogOpen(false);
-      navigate(`/room/${roomId}/summary`);
+      navigate(`/room/${roomId}/summary`, { state: { participantId } });
     } catch {
       setEndCallError("Could not end the call. Try again.");
     } finally {
       setEndCallBusy(false);
     }
-  }, [navigate, roomId, stopPlayback]);
+  }, [navigate, participantId, roomId, stopPlayback]);
 
   const onCopyLink = useCallback(async (): Promise<void> => {
     const url = joinUrlForRoom(roomId);
@@ -501,17 +523,26 @@ export function Room(): JSX.Element {
               {copyDone ? "Copied" : "Copy invite link"}
             </button>
             <LatencyIndicator pipelineMs={pipelineMs} />
-            <button
-              type="button"
-              className="rounded-lg bg-room-danger px-3 py-2 text-xs font-medium text-slate-950 hover:brightness-110 disabled:opacity-50 sm:text-sm"
-              disabled={!roomActive || endCallBusy}
-              onClick={() => {
-                setEndCallError(null);
-                setEndDialogOpen(true);
-              }}
-            >
-              End call
-            </button>
+            {isRoomHost ? (
+              <button
+                type="button"
+                className="rounded-lg bg-room-danger px-3 py-2 text-xs font-medium text-slate-950 hover:brightness-110 disabled:opacity-50 sm:text-sm"
+                disabled={!roomActive || endCallBusy}
+                onClick={() => {
+                  setEndCallError(null);
+                  setEndDialogOpen(true);
+                }}
+              >
+                End call
+              </button>
+            ) : (
+              <span
+                className="max-w-[11rem] text-right text-[10px] leading-snug text-slate-500 sm:max-w-none sm:text-xs"
+                title="The first person to join this room can end it and open call notes."
+              >
+                Only the host can end the call or open notes.
+              </span>
+            )}
           </div>
         </div>
       </header>
@@ -674,22 +705,49 @@ export function Room(): JSX.Element {
                         </>
                       ) : null}
                     </span>
-                    <button
-                      type="button"
-                      className="rounded-md bg-slate-700 px-2 py-1 text-[11px] font-medium text-slate-100 hover:bg-slate-600"
-                      onClick={() => void resumeRemoteAudio()}
-                    >
-                      Play remote audio
-                    </button>
+                    <div className="flex flex-wrap gap-1.5">
+                      {(iceConnectionState === "failed" ||
+                        iceConnectionState === "disconnected" ||
+                        peerConnectionState === "failed") && (
+                        <button
+                          type="button"
+                          className="rounded-md bg-sky-800 px-2 py-1 text-[11px] font-medium text-sky-100 hover:bg-sky-700"
+                          onClick={() => setWebrtcReset((n) => n + 1)}
+                        >
+                          Reconnect peer
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="rounded-md bg-slate-700 px-2 py-1 text-[11px] font-medium text-slate-100 hover:bg-slate-600"
+                        onClick={() => void resumeRemoteAudio()}
+                      >
+                        Play remote audio
+                      </button>
+                    </div>
                   </div>
                   {(iceConnectionState === "failed" ||
                     peerConnectionState === "failed") && (
                     <p className="mt-2 text-amber-200/90">
-                      Connection failed—try &quot;Play remote audio&quot; after
-                      interacting with the page, or configure TURN in{" "}
-                      <code className="text-room-accent">WEBRTC_ICE_SERVERS</code>.
+                      Connection failed—tap{" "}
+                      <span className="font-medium">Play remote audio</span> after
+                      you click the page, try{" "}
+                      <span className="font-medium">Reconnect peer</span>, and ensure
+                      TURN is set in{" "}
+                      <code className="text-room-accent">WEBRTC_ICE_SERVERS</code>{" "}
+                      on the Worker (symmetric NAT / strict firewalls often need relay).
                     </p>
                   )}
+                  {iceConnectionState === "disconnected" &&
+                    peerConnectionState !== "failed" && (
+                      <p className="mt-2 text-slate-400">
+                        ICE disconnected—you can try{" "}
+                        <span className="font-medium text-slate-200">
+                          Reconnect peer
+                        </span>{" "}
+                        or check your network.
+                      </p>
+                    )}
                 </div>
               ) : null}
 

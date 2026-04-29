@@ -31,7 +31,11 @@ Full Worker + static assets on a **single** port (no Vite): `cd apps/worker && n
 
 ### WebRTC and NAT (TURN)
 
-Peer audio uses **WebRTC**. The SPA calls **`GET /api/webrtc-ice`** on your Worker for ICE servers: by default it returns two public **STUN** endpoints. For **production deployments**, set Worker var **`WEBRTC_ICE_SERVERS`** in `wrangler.toml` (or the dashboard) to a JSON array of [`RTCIceServer`](https://developer.mozilla.org/en-US/docs/Web/API/RTCIceServer) objects—usually including a **TURN** URL and credentials—then redeploy. Without TURN, many mobile or corporate networks will connect signaling but **fail to carry audio**. Optionally override at build time with **`VITE_WEBRTC_ICE_SERVERS`** for local or split-origin setups. **Headphones** are strongly recommended when both live and AI audio are on, to reduce echo.
+Peer audio uses **WebRTC**. The SPA calls **`GET /api/webrtc-ice`** on your Worker for ICE servers: by default it returns two public **STUN** endpoints. For **production deployments**, set Worker var **`WEBRTC_ICE_SERVERS`** in `wrangler.toml` (or the dashboard) to a JSON array of [`RTCIceServer`](https://developer.mozilla.org/en-US/docs/Web/API/RTCIceServer) objects—usually including a **TURN** URL and credentials—then redeploy. Without TURN, many mobile or corporate networks will connect signaling but **fail to carry audio** (ICE may show “disconnected” or “failed” even when signaling works). If that happens, use **Reconnect peer** and **Play remote audio** in the room UI after clicking the page, then fix TURN. Optionally override at build time with **`VITE_WEBRTC_ICE_SERVERS`** for local or split-origin setups. **Headphones** are strongly recommended when both live and AI audio are on, to reduce echo.
+
+### Room host (end call + notes)
+
+The **first participant to join** a room becomes the **host** (`rooms.host_participant_id` in D1, migration `0003_room_host.sql`). Only the host may **end the call** (API requires their `participantId`) or **poll call notes** after the call. Share the invite link after you have joined if you need to be the host. Apply the migration locally and remotely after pulling this change.
 
 ---
 
