@@ -1,6 +1,7 @@
 import type { AudioChunk, Language, PipelineResult } from "@babel-room/shared";
 import {
   DEFAULT_CAPTURE_SAMPLE_RATE_HZ,
+  LANGUAGE_LABELS,
   LANGUAGE_TO_MELOTTS_LANG,
   LLAMA_MODEL,
   MELOTTS_MODEL,
@@ -36,6 +37,20 @@ function normalizeDetectedLanguage(raw: string | undefined): Language {
   if (lower.startsWith("ja")) return "ja";
   if (lower.startsWith("ko")) return "ko";
   return "en";
+}
+
+function translationSystemPrompt(
+  sourceLang: Language,
+  targetLang: Language,
+): string {
+  const from = LANGUAGE_LABELS[sourceLang].english;
+  const to = LANGUAGE_LABELS[targetLang].english;
+  return `You are a machine translation stage in a speech pipeline (speech was already transcribed by a separate model). Your only task is to convert the transcript from ${from} into ${to}.
+
+Output rules:
+- Emit ONLY the translated ${to} text. One contiguous utterance suitable for text-to-speech. No title, bullets, markdown, or quotation marks around the whole output.
+- Preserve meaning and tone; keep questions as questions in ${to}. Do not answer questions, do not explain, refuse, comment, or add preamble (never start with phrases like "Here is", "Sure", "The translation is", or "As an AI").
+- If the transcript is already good ${to}, repeat it with minimal edits for natural ${to} speech.`;
 }
 
 function emptyResult(
@@ -185,13 +200,15 @@ export async function runAudioPipeline(
         let translated = "";
         try {
           const tr = (await env.AI.run(LLAMA_MODEL, {
-            prompt: `Translate this ${sourceLang} text to ${targetLang}.
-Output ONLY the translation, no explanation or tags.
-
----
-${transcript}
----`,
+            messages: [
+              {
+                role: "system",
+                content: translationSystemPrompt(sourceLang, targetLang),
+              },
+              { role: "user", content: transcript },
+            ],
             max_tokens: 500,
+            temperature: 0.15,
           })) as { response?: string };
           translated = stripTranslationArtifacts(tr.response ?? "");
         } catch (e) {

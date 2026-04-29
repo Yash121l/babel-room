@@ -13,4 +13,11 @@ describe("stripTranslationArtifacts", () => {
   it("trims and normalizes spaces", () => {
     expect(stripTranslationArtifacts("  hello  \n  world  ")).toBe("hello world");
   });
+
+  it("strips conversational lead-ins models add before the translation", () => {
+    expect(
+      stripTranslationArtifacts("Here's the translation: Bonjour tout le monde."),
+    ).toBe("Bonjour tout le monde.");
+    expect(stripTranslationArtifacts("Sure! Hola amigo.")).toBe("Hola amigo.");
+  });
 });

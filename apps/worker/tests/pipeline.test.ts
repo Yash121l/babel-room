@@ -82,6 +82,13 @@ describe("runAudioPipeline", () => {
     expect(whisperArgs.language).toBe("es");
     expect(whisperArgs.vad_filter).toBe(true);
     expect(whisperArgs.initial_prompt).toContain("Yash");
+    const llamaArgs = run.mock.calls[1][1] as {
+      messages?: { role: string; content: string }[];
+      temperature?: number;
+    };
+    expect(llamaArgs.messages?.[0]?.role).toBe("system");
+    expect(llamaArgs.messages?.[1]).toEqual({ role: "user", content: "hola" });
+    expect(llamaArgs.temperature).toBe(0.15);
   });
 
   it("uses spokenLanguageHint as transcript sourceLang when Whisper reports English", async () => {
