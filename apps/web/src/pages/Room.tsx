@@ -23,10 +23,11 @@ import {
   useTranscript,
   useWebRTC,
 } from "../hooks";
-import { endRoom, joinRoom } from "../lib/api";
+import { endRoom, fetchWebRtcIceConfig, joinRoom } from "../lib/api";
 import { logger } from "../lib/logger";
 import { loadRoomProfile, saveRoomProfile, type RoomJoinProfile } from "../lib/roomProfile";
 import { parseTranscriptSegmentTranslations } from "../lib/transcriptWire";
+import { parseViteWebRtcIceServers } from "../lib/webrtcIce";
 
 /** Invite URL: opening it uses saved profile on this device or shows a short join form. */
 function joinUrlForRoom(roomId: string): string {
@@ -75,14 +76,36 @@ export function Room(): JSX.Element {
   const [endCallError, setEndCallError] = useState<string | null>(null);
   const [copyDone, setCopyDone] = useState(false);
   const [transcriptMode, setTranscriptMode] = useState<"mine" | "original">("mine");
-  const [translationTtsEnabled, setTranslationTtsEnabled] = useState(true);
+  /** What you want to hear: both live + AI, live people only, or AI translation only. */
+  const [listeningMode, setListeningMode] = useState<"both" | "peer" | "ai">("both");
   const [translationTtsVolume, setTranslationTtsVolume] = useState(1);
-  const [peerVoiceEnabled, setPeerVoiceEnabled] = useState(true);
   const [peerVoiceVolume, setPeerVoiceVolume] = useState(1);
   const [duckRemoteWhileTts, setDuckRemoteWhileTts] = useState(true);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [iceServers, setIceServers] = useState<RTCIceServer[]>(() =>
+    parseViteWebRtcIceServers(),
+  );
   const speakingTimers = useRef<Map<string, number>>(new Map());
   const joinKeyRef = useRef(0);
+
+  const peerVoiceEnabled = listeningMode !== "ai";
+  const translationTtsEnabled = listeningMode !== "peer";
+
+  useEffect(() => {
+    let alive = true;
+    void fetchWebRtcIceConfig()
+      .then((r) => {
+        if (!alive || !r.iceServers?.length) return;
+        setIceServers(r.iceServers);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setIceServers(parseViteWebRtcIceServers());
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const {
     enqueue: enqueueTranslationAudio,
@@ -184,22 +207,30 @@ export function Room(): JSX.Element {
     onBatchUploaded,
   });
 
-  const peerAudio = useRoomPeerAudio({
+  const {
+    handleSignalingMessage: handlePeerWebrtcMessage,
+    peerConnectionState,
+    iceConnectionState,
+    resumeRemoteAudio,
+  } = useRoomPeerAudio({
     selfId: participantId ?? "",
     peerId,
     mediaStream,
     sendRoomMessage,
-    enabled: Boolean(roomActive && participantId && peerId && mediaStream),
+    enabled: Boolean(
+      roomActive && participantId && peerId && mediaStream && listeningMode !== "ai",
+    ),
     remoteMuted: !peerVoiceEnabled,
     remoteVolume: peerVoiceVolume,
     duckWhileTts: duckRemoteWhileTts,
     ttsIsPlaying: translationTtsIsPlaying,
     remoteAudioRef,
+    iceServers,
   });
 
   useLayoutEffect(() => {
-    handlePeerSignalingRef.current = peerAudio.handleSignalingMessage;
-  }, [peerAudio.handleSignalingMessage]);
+    handlePeerSignalingRef.current = handlePeerWebrtcMessage;
+  }, [handlePeerWebrtcMessage]);
 
   useEffect(() => {
     setTranslationTtsMuted(!translationTtsEnabled);
@@ -508,15 +539,15 @@ export function Room(): JSX.Element {
         ) : null}
 
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1.15fr)_minmax(300px,1fr)] lg:items-start">
-          <section className="flex min-h-0 min-w-0 flex-col gap-3 lg:sticky lg:top-28">
+          <section className="flex min-h-0 min-w-0 max-h-[min(88dvh,920px)] flex-col gap-3 lg:sticky lg:top-24 lg:max-h-[calc(100dvh-6.5rem)]">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">
                   Transcript
                 </h2>
                 <p className="mt-1 max-w-md text-xs text-slate-500">
-                  Read along in your &quot;hear&quot; language or switch to the raw
-                  transcript. Cards match the room pipeline (same timing as TTS).
+                  Scroll the conversation below. Toggle caption language with the
+                  control on the right.
                 </p>
               </div>
               <div
@@ -557,7 +588,7 @@ export function Room(): JSX.Element {
               participantNames={participantNames}
               viewerTargetLang={myTargetLang}
               transcriptMode={transcriptMode}
-              className="min-h-[320px] max-h-[min(62vh,calc(100vh-12rem))] lg:max-h-[calc(100vh-8rem)]"
+              className="min-h-0 flex-1"
             />
           </section>
 
@@ -573,70 +604,147 @@ export function Room(): JSX.Element {
               />
             </section>
 
-            <section className="space-y-3 rounded-xl border border-slate-800 bg-room-panel p-4">
-              <h2 className="text-sm font-medium uppercase tracking-wide text-room-muted">
-                Listening
-              </h2>
-              <p className="text-xs text-room-muted">
-                Raw voices use WebRTC between browsers. Translated voice is AI TTS in
-                your &quot;hear&quot; language, played one clip at a time so it does
-                not overlap. Headphones reduce echo if both are on.
-              </p>
-              <div className="mt-3 flex flex-col gap-3 text-sm">
-                <label className="flex cursor-pointer items-center gap-2 text-slate-200">
-                  <input
-                    type="checkbox"
-                    checked={peerVoiceEnabled}
-                    onChange={(e) => setPeerVoiceEnabled(e.target.checked)}
-                    className="rounded border-slate-600"
-                  />
-                  Live peer voices (WebRTC)
-                </label>
-                <div className="flex flex-wrap items-center gap-2 pl-6 text-xs text-room-muted">
-                  <span>Peer volume</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    value={Math.round(peerVoiceVolume * 100)}
-                    onChange={(e) =>
-                      setPeerVoiceVolume(Number(e.target.value) / 100)
-                    }
-                    disabled={!peerVoiceEnabled}
-                    className="w-32"
-                  />
+            <section className="space-y-4 rounded-2xl border border-slate-700/80 bg-room-panel p-5 shadow-lg shadow-black/10">
+              <div>
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">
+                  Listening
+                </h2>
+                <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                  Choose how you hear the other person: their real voice (WebRTC), AI
+                  translated speech (TTS), or both. On many networks you need TURN for
+                  WebRTC—set{" "}
+                  <code className="rounded bg-slate-800 px-1 text-room-accent">
+                    WEBRTC_ICE_SERVERS
+                  </code>{" "}
+                  on the Worker (see README).
+                </p>
+              </div>
+
+              <div
+                className="flex flex-col gap-2 rounded-xl border border-slate-700/60 bg-slate-950/50 p-1 sm:flex-row"
+                role="tablist"
+                aria-label="Listening source"
+              >
+                {(
+                  [
+                    { id: "both" as const, label: "Both", hint: "Live + AI" },
+                    { id: "peer" as const, label: "People", hint: "WebRTC only" },
+                    { id: "ai" as const, label: "AI voice", hint: "TTS only" },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={listeningMode === opt.id}
+                    className={`flex flex-1 flex-col items-center rounded-lg px-3 py-2.5 text-center transition-colors ${
+                      listeningMode === opt.id
+                        ? "bg-sky-600 text-white shadow-md"
+                        : "text-slate-400 hover:bg-slate-800/80 hover:text-slate-200"
+                    }`}
+                    onClick={() => setListeningMode(opt.id)}
+                  >
+                    <span className="text-xs font-semibold">{opt.label}</span>
+                    <span
+                      className={`mt-0.5 text-[10px] ${
+                        listeningMode === opt.id ? "text-sky-100" : "text-slate-500"
+                      }`}
+                    >
+                      {opt.hint}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              {peerId && listeningMode !== "ai" ? (
+                <div className="rounded-lg border border-slate-700/50 bg-slate-900/40 px-3 py-2 text-xs text-slate-400">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span>
+                      WebRTC:{" "}
+                      <span className="font-medium text-slate-200">
+                        {peerConnectionState ?? "…"}
+                      </span>
+                      {iceConnectionState ? (
+                        <>
+                          {" "}
+                          · ICE:{" "}
+                          <span className="font-medium text-slate-200">
+                            {iceConnectionState}
+                          </span>
+                        </>
+                      ) : null}
+                    </span>
+                    <button
+                      type="button"
+                      className="rounded-md bg-slate-700 px-2 py-1 text-[11px] font-medium text-slate-100 hover:bg-slate-600"
+                      onClick={() => void resumeRemoteAudio()}
+                    >
+                      Play remote audio
+                    </button>
+                  </div>
+                  {(iceConnectionState === "failed" ||
+                    peerConnectionState === "failed") && (
+                    <p className="mt-2 text-amber-200/90">
+                      Connection failed—try &quot;Play remote audio&quot; after
+                      interacting with the page, or configure TURN in{" "}
+                      <code className="text-room-accent">WEBRTC_ICE_SERVERS</code>.
+                    </p>
+                  )}
                 </div>
-                <label className="flex cursor-pointer items-center gap-2 text-slate-200">
-                  <input
-                    type="checkbox"
-                    checked={translationTtsEnabled}
-                    onChange={(e) => setTranslationTtsEnabled(e.target.checked)}
-                    className="rounded border-slate-600"
-                  />
-                  Translated voice (AI TTS)
-                </label>
-                <div className="flex flex-wrap items-center gap-2 pl-6 text-xs text-room-muted">
-                  <span>TTS volume</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    value={Math.round(translationTtsVolume * 100)}
-                    onChange={(e) =>
-                      setTranslationTtsVolume(Number(e.target.value) / 100)
-                    }
-                    disabled={!translationTtsEnabled}
-                    className="w-32"
-                  />
+              ) : null}
+
+              <div className="flex flex-col gap-3 text-sm">
+                <div
+                  className={`flex flex-col gap-2 ${listeningMode === "ai" ? "opacity-40" : ""}`}
+                >
+                  <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                    Live voices volume
+                  </span>
+                  <div className="flex flex-wrap items-center gap-3 text-xs text-room-muted">
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={Math.round(peerVoiceVolume * 100)}
+                      onChange={(e) =>
+                        setPeerVoiceVolume(Number(e.target.value) / 100)
+                      }
+                      disabled={listeningMode === "ai"}
+                      className="h-2 flex-1 min-w-[8rem] accent-sky-500"
+                      aria-label="Peer voice volume"
+                    />
+                  </div>
+                </div>
+                <div
+                  className={`flex flex-col gap-2 ${listeningMode === "peer" ? "opacity-40" : ""}`}
+                >
+                  <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                    AI translation (TTS) volume
+                  </span>
+                  <div className="flex flex-wrap items-center gap-3 text-xs text-room-muted">
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={Math.round(translationTtsVolume * 100)}
+                      onChange={(e) =>
+                        setTranslationTtsVolume(Number(e.target.value) / 100)
+                      }
+                      disabled={listeningMode === "peer"}
+                      className="h-2 flex-1 min-w-[8rem] accent-amber-500"
+                      aria-label="Translated TTS volume"
+                    />
+                  </div>
                 </div>
                 <label className="flex cursor-pointer items-center gap-2 text-slate-200">
                   <input
                     type="checkbox"
                     checked={duckRemoteWhileTts}
                     onChange={(e) => setDuckRemoteWhileTts(e.target.checked)}
+                    disabled={listeningMode !== "both"}
                     className="rounded border-slate-600"
                   />
-                  Lower peer volume while translated TTS is playing
+                  When using both, lower live voices while AI TTS plays
                 </label>
                 <p className="text-xs text-slate-500">
                   TTS queue: {translationTtsQueueDepth}

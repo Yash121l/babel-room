@@ -9,6 +9,7 @@ compatibility_flags = ["nodejs_compat"]
 ALLOWED_ORIGINS = "*"
 # Dev-only: transcript/audio inject routes. Never set to "1" in production wrangler.toml.
 BABEL_DEV_TOOLS = "1"
+WEBRTC_ICE_SERVERS = ""
 
 [observability]
 enabled = true

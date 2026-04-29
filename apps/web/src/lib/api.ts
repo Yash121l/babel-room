@@ -3,6 +3,17 @@ import { logger } from "./logger";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 
+export async function fetchWebRtcIceConfig(): Promise<{
+  iceServers: RTCIceServer[];
+}> {
+  const res = await fetch(`${API_BASE}/api/webrtc-ice`);
+  if (!res.ok) {
+    logger.error("webrtc_ice_config_failed", { status: res.status });
+    throw new Error("Failed to load WebRTC ICE config");
+  }
+  return (await res.json()) as { iceServers: RTCIceServer[] };
+}
+
 export interface CreateRoomResponse {
   roomId: string;
   joinUrl: string;

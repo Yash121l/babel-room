@@ -31,7 +31,7 @@ Full Worker + static assets on a **single** port (no Vite): `cd apps/worker && n
 
 ### WebRTC and NAT (TURN)
 
-Peer audio uses **WebRTC** with a default **STUN** server (`stun:stun.l.google.com:19302`). On restrictive networks you may need **TURN**. Set **`VITE_WEBRTC_ICE_SERVERS`** when building the web app to a JSON array of [`RTCIceServer`](https://developer.mozilla.org/en-US/docs/Web/API/RTCIceServer) objects (same shape as `RTCConfiguration.iceServers`), for example credentials from a TURN host. **Headphones** are strongly recommended when both raw peer audio and translated TTS are enabled, to reduce echo.
+Peer audio uses **WebRTC**. The SPA calls **`GET /api/webrtc-ice`** on your Worker for ICE servers: by default it returns two public **STUN** endpoints. For **production deployments**, set Worker var **`WEBRTC_ICE_SERVERS`** in `wrangler.toml` (or the dashboard) to a JSON array of [`RTCIceServer`](https://developer.mozilla.org/en-US/docs/Web/API/RTCIceServer) objects—usually including a **TURN** URL and credentials—then redeploy. Without TURN, many mobile or corporate networks will connect signaling but **fail to carry audio**. Optionally override at build time with **`VITE_WEBRTC_ICE_SERVERS`** for local or split-origin setups. **Headphones** are strongly recommended when both live and AI audio are on, to reduce echo.
 
 ---
 

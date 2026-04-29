@@ -17,6 +17,7 @@ import {
 import { MAX_AUDIO_CHUNK_BYTES } from "./constants";
 import { runAudioPipeline } from "./pipeline";
 import { sanitizeTranscriptText } from "./sanitize";
+import { parseWebRtcIceServersFromEnv } from "./webrtcIce";
 import {
   audioChunkBodySchema,
   devInjectTranslatedAudioBodySchema,
@@ -130,6 +131,16 @@ app.post("/api/rooms", async (c) => {
     );
     return structuredError(c, "INTERNAL", "Failed to create room", 500);
   }
+});
+
+/** ICE servers for browser WebRTC (STUN/TURN). Set `WEBRTC_ICE_SERVERS` JSON in wrangler. */
+app.get("/api/webrtc-ice", (c) => {
+  const iceServers = parseWebRtcIceServersFromEnv(
+    c.env as Env & { WEBRTC_ICE_SERVERS?: string },
+  );
+  return c.json({ iceServers }, 200, {
+    "Cache-Control": "public, max-age=300",
+  });
 });
 
 app.get("/api/rooms/:roomId", async (c) => {
