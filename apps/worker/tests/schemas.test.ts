@@ -71,6 +71,7 @@ describe("pipelineBroadcastBodySchema", () => {
     expect(
       pipelineBroadcastBodySchema.safeParse({
         participantId: "550e8400-e29b-41d4-a716-446655440000",
+        sequenceNum: 1,
         pipelineResult: {
           transcript: "hi",
           sourceLang: "en",
@@ -80,6 +81,7 @@ describe("pipelineBroadcastBodySchema", () => {
         },
         transcriptSegment: {
           ts: 1,
+          sequenceNum: 1,
           sourceText: "hi",
           sourceLang: "en",
           translations: { es: "hola" },
@@ -91,6 +93,7 @@ describe("pipelineBroadcastBodySchema", () => {
     expect(
       pipelineBroadcastBodySchema.safeParse({
         participantId: "550e8400-e29b-41d4-a716-446655440000",
+        sequenceNum: 0,
         pipelineResult: {
           transcript: "hi",
           sourceLang: "xx",

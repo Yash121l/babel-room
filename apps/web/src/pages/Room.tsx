@@ -17,6 +17,7 @@ import {
   TranscriptPanel,
 } from "../components";
 import {
+  useOrderedTranslationTts,
   useRoom,
   useRoomPeerAudio,
   useSequentialAudioPlayback,
@@ -344,6 +345,10 @@ export function Room(): JSX.Element {
     queueDepth: translationTtsQueueDepth,
   } = useSequentialAudioPlayback();
 
+  const enqueueOrderedTranslationRef = useRef<
+    (speakerId: string, sequenceNum: number, audioB64: string) => void
+  >(() => {});
+
   const resolvedProfile = useMemo((): RoomJoinProfile | null => {
     const fromNav = profileFromLocationState(location.state);
     if (fromNav) return fromNav;
@@ -376,13 +381,27 @@ export function Room(): JSX.Element {
           sourceLang: msg.sourceLang,
           translations: parseTranscriptSegmentTranslations(msg.translations),
           ts: msg.ts,
+          ...(msg.sequenceNum !== undefined
+            ? { sequenceNum: msg.sequenceNum }
+            : {}),
         });
         markSpeaking(msg.participantId);
       }
       if (msg.type === "translated_audio") {
         if (participantId && msg.targetParticipantId !== participantId) return;
         if (!translationTtsEnabled) return;
-        enqueueTranslationAudio(msg.audioB64);
+        if (
+          msg.speakerParticipantId !== undefined &&
+          msg.sequenceNum !== undefined
+        ) {
+          enqueueOrderedTranslationRef.current(
+            msg.speakerParticipantId,
+            msg.sequenceNum,
+            msg.audioB64,
+          );
+        } else {
+          enqueueTranslationAudio(msg.audioB64);
+        }
       }
     },
     [addLine, enqueueTranslationAudio, markSpeaking, participantId, translationTtsEnabled],
@@ -403,6 +422,15 @@ export function Room(): JSX.Element {
     if (ids.length !== 2 || !participantId) return null;
     return ids.find((id) => id !== participantId) ?? null;
   }, [participants, participantId]);
+
+  const { enqueueSequenced: enqueueOrderedTranslation } =
+    useOrderedTranslationTts(enqueueTranslationAudio, clearTranslationAudioQueue, {
+      resetKey: `${roomId}:${peerId ?? "none"}`,
+    });
+
+  useLayoutEffect(() => {
+    enqueueOrderedTranslationRef.current = enqueueOrderedTranslation;
+  }, [enqueueOrderedTranslation]);
 
   const myTargetLang = useMemo((): Language => {
     if (participantId && participants[participantId]) return participants[participantId].targetLang;

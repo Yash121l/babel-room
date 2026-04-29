@@ -450,6 +450,7 @@ app.post("/api/rooms/:roomId/audio", async (c) => {
     let transcriptSegment:
       | {
           ts: number;
+          sequenceNum: number;
           sourceText: string;
           sourceLang: Language;
           translations: Record<string, string>;
@@ -472,6 +473,7 @@ app.post("/api/rooms/:roomId/audio", async (c) => {
         }
         transcriptSegment = {
           ts: body.timestampMs,
+          sequenceNum: body.sequenceNum,
           sourceText: safeText,
           sourceLang: result.sourceLang,
           translations,
@@ -482,6 +484,7 @@ app.post("/api/rooms/:roomId/audio", async (c) => {
     await stub.fetch(
       doInternalRequest("/broadcast-pipeline-result", requestId, {
         participantId: body.participantId,
+        sequenceNum: body.sequenceNum,
         pipelineResult: result,
         transcriptSegment,
       }),
@@ -743,6 +746,7 @@ app.post("/api/rooms/:roomId/dev/inject-transcript", async (c) => {
           sourceLang: seg.sourceLang,
           translations,
           ts,
+          sequenceNum: injected,
         }),
       );
     }

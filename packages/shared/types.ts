@@ -45,10 +45,16 @@ export type WSMessageType =
       /** Per-target-language strings (same keys as pipeline translations) */
       translations: Partial<Record<Language, string>>;
       ts: number;
+      /** Monotonic per speaker; aligns live UI with capture order when HTTP responses reorder. */
+      sequenceNum?: number;
     }
   | {
       type: "translated_audio";
       targetParticipantId: string;
+      /** Speaker whose pipeline produced this clip (for ordered playback). */
+      speakerParticipantId?: string;
+      /** Same as capture batch `sequenceNum` from that speaker. */
+      sequenceNum?: number;
       audioB64: string;
       lang: Language;
     }

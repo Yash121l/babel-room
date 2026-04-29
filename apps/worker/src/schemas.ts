@@ -49,10 +49,12 @@ const pipelineResultSchema = z.object({
 
 export const pipelineBroadcastBodySchema = z.object({
   participantId: participantIdSchema,
+  sequenceNum: z.number().int().nonnegative(),
   pipelineResult: pipelineResultSchema,
   transcriptSegment: z
     .object({
       ts: z.number().int().nonnegative(),
+      sequenceNum: z.number().int().nonnegative().optional(),
       sourceText: z.string().min(1).max(8000),
       sourceLang: languageSchema,
       translations: z.record(z.string(), z.string()),

@@ -1,3 +1,4 @@
+export { useOrderedTranslationTts } from "./useOrderedTranslationTts";
 export { useRoom } from "./useRoom";
 export { useRoomPeerAudio } from "./useRoomPeerAudio";
 export { useSequentialAudioPlayback } from "./useSequentialAudioPlayback";

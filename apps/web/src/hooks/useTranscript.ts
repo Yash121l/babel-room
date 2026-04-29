@@ -9,6 +9,8 @@ export interface TranscriptLine {
   translations: Partial<Record<Language, string>>;
   /** Server-ish segment time from pipeline. */
   ts: number;
+  /** Capture batch order per speaker (optional for dev / legacy). */
+  sequenceNum?: number;
   /** Client time when this line was created or last coalesced into (freshness / age UI). */
   receivedAt: number;
 }
@@ -29,6 +31,53 @@ function mergeTranslations(
   return out;
 }
 
+function compareLines(a: TranscriptLine, b: TranscriptLine): number {
+  const dts = a.ts - b.ts;
+  if (dts !== 0) return dts;
+  const sa = a.sequenceNum ?? 0;
+  const sb = b.sequenceNum ?? 0;
+  if (sa !== sb) return sa - sb;
+  return a.participantId.localeCompare(b.participantId);
+}
+
+function mergeCoalesced(sorted: TranscriptLine[]): TranscriptLine[] {
+  const out: TranscriptLine[] = [];
+  for (const line of sorted) {
+    const last = out[out.length - 1];
+    const bothHaveSeq =
+      last !== undefined &&
+      last.sequenceNum !== undefined &&
+      line.sequenceNum !== undefined;
+    const seqConsecutive =
+      bothHaveSeq && line.sequenceNum === last.sequenceNum! + 1;
+    const seqOk = !bothHaveSeq || seqConsecutive;
+
+    const canCoalesce =
+      last &&
+      last.participantId === line.participantId &&
+      last.sourceLang === line.sourceLang &&
+      seqOk &&
+      line.ts >= last.ts &&
+      line.ts - last.ts < COALESCE_MAX_GAP_MS &&
+      last.sourceText.length + 1 + line.sourceText.trim().length <=
+        COALESCE_MAX_CHARS;
+
+    if (canCoalesce && last) {
+      out[out.length - 1] = {
+        ...last,
+        sourceText: `${last.sourceText} ${line.sourceText.trim()}`.trim(),
+        translations: mergeTranslations(last.translations, line.translations),
+        ts: line.ts,
+        sequenceNum: line.sequenceNum ?? last.sequenceNum,
+        receivedAt: line.receivedAt,
+      };
+    } else {
+      out.push(line);
+    }
+  }
+  return out;
+}
+
 export const TRANSCRIPT_BUFFER_MAX_LINES = 200;
 
 export function useTranscript(): {
@@ -41,35 +90,16 @@ export function useTranscript(): {
   const addLine = useCallback((line: Omit<TranscriptLine, "id" | "receivedAt">) => {
     if (!line.sourceText.trim()) return;
     setLines((prev) => {
-      const last = prev[prev.length - 1];
-      const nextChunk = line.sourceText.trim();
-      const canCoalesce =
-        last &&
-        last.participantId === line.participantId &&
-        last.sourceLang === line.sourceLang &&
-        line.ts - last.ts < COALESCE_MAX_GAP_MS &&
-        last.sourceText.length + 1 + nextChunk.length <= COALESCE_MAX_CHARS;
-
       const now = Date.now();
-      if (canCoalesce) {
-        const merged: TranscriptLine = {
-          ...last,
-          sourceText: `${last.sourceText} ${nextChunk}`.trim(),
-          translations: mergeTranslations(last.translations, line.translations),
-          ts: line.ts,
-          receivedAt: now,
-        };
-        const next = [...prev.slice(0, -1), merged];
-        const cap = TRANSCRIPT_BUFFER_MAX_LINES;
-        return next.length > cap ? next.slice(-cap) : next;
-      }
-
-      const next = [
-        ...prev,
-        { ...line, id: crypto.randomUUID(), receivedAt: now },
-      ];
+      const newLine: TranscriptLine = {
+        ...line,
+        id: crypto.randomUUID(),
+        receivedAt: now,
+      };
+      const combined = [...prev, newLine].sort(compareLines);
+      const merged = mergeCoalesced(combined);
       const cap = TRANSCRIPT_BUFFER_MAX_LINES;
-      return next.length > cap ? next.slice(-cap) : next;
+      return merged.length > cap ? merged.slice(-cap) : merged;
     });
   }, []);
 

@@ -108,6 +108,7 @@ export class RoomDO extends DurableObject<Env> {
       sourceLang?: Language;
       translations?: Partial<Record<Language, string>>;
       ts?: number;
+      sequenceNum?: number;
     };
     try {
       body = (await request.json()) as typeof body;
@@ -134,6 +135,9 @@ export class RoomDO extends DurableObject<Env> {
       sourceLang: body.sourceLang,
       translations,
       ts: body.ts ?? Date.now(),
+      ...(body.sequenceNum !== undefined
+        ? { sequenceNum: body.sequenceNum }
+        : {}),
     });
 
     return Response.json({ ok: true });
@@ -391,9 +395,11 @@ export class RoomDO extends DurableObject<Env> {
   private async handlePipelineResult(request: Request): Promise<Response> {
     let parsed: {
       participantId: string;
+      sequenceNum: number;
       pipelineResult: PipelineResult;
       transcriptSegment?: {
         ts: number;
+        sequenceNum?: number;
         sourceText: string;
         sourceLang: Language;
         translations: Record<string, string>;
@@ -406,6 +412,10 @@ export class RoomDO extends DurableObject<Env> {
     }
 
     const { participantId, pipelineResult, transcriptSegment } = parsed;
+    const sequenceNum =
+      typeof parsed.sequenceNum === "number" && Number.isFinite(parsed.sequenceNum)
+        ? parsed.sequenceNum
+        : 0;
 
     const sockets = this.ctx.getWebSockets();
     const wsByParticipant = new Map<string, WebSocket>();
@@ -425,6 +435,8 @@ export class RoomDO extends DurableObject<Env> {
       this.sendToWebSocket(ws, {
         type: "translated_audio",
         targetParticipantId: pid,
+        speakerParticipantId: participantId,
+        sequenceNum,
         audioB64,
         lang: targetLang,
       });
@@ -444,6 +456,9 @@ export class RoomDO extends DurableObject<Env> {
         sourceLang: transcriptSegment.sourceLang,
         translations,
         ts: transcriptSegment.ts,
+        ...(transcriptSegment.sequenceNum !== undefined
+          ? { sequenceNum: transcriptSegment.sequenceNum }
+          : {}),
       });
     }
 
