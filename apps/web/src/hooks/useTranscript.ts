@@ -4,8 +4,9 @@ import type { Language } from "@babel-room/shared";
 export interface TranscriptLine {
   id: string;
   participantId: string;
-  text: string;
-  lang: Language;
+  sourceText: string;
+  sourceLang: Language;
+  translations: Partial<Record<Language, string>>;
   ts: number;
 }
 
@@ -17,7 +18,7 @@ export function useTranscript(): {
   const [lines, setLines] = useState<TranscriptLine[]>([]);
 
   const addLine = useCallback((line: Omit<TranscriptLine, "id">) => {
-    if (!line.text.trim()) return;
+    if (!line.sourceText.trim()) return;
     setLines((prev) => {
       const next = [
         ...prev,

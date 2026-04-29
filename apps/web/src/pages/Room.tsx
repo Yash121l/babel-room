@@ -16,20 +16,16 @@ import {
   ParticipantGrid,
   TranscriptPanel,
 } from "../components";
-import { useRoom, useTranscript, useWebRTC } from "../hooks";
+import {
+  useRoom,
+  useRoomPeerAudio,
+  useSequentialAudioPlayback,
+  useTranscript,
+  useWebRTC,
+} from "../hooks";
 import { endRoom, joinRoom } from "../lib/api";
 import { logger } from "../lib/logger";
 import { loadRoomProfile, saveRoomProfile, type RoomJoinProfile } from "../lib/roomProfile";
-
-function base64ToUint8Array(b64: string): Uint8Array {
-  const binary = atob(b64);
-  const len = binary.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
 
 /** Invite URL: opening it uses saved profile on this device or shows a short join form. */
 function joinUrlForRoom(roomId: string): string {
@@ -77,9 +73,25 @@ export function Room(): JSX.Element {
   const [endCallBusy, setEndCallBusy] = useState(false);
   const [endCallError, setEndCallError] = useState<string | null>(null);
   const [copyDone, setCopyDone] = useState(false);
-  const playbackRef = useRef<AudioContext | null>(null);
+  const [transcriptMode, setTranscriptMode] = useState<"mine" | "original">("mine");
+  const [translationTtsEnabled, setTranslationTtsEnabled] = useState(true);
+  const [translationTtsVolume, setTranslationTtsVolume] = useState(1);
+  const [peerVoiceEnabled, setPeerVoiceEnabled] = useState(true);
+  const [peerVoiceVolume, setPeerVoiceVolume] = useState(1);
+  const [duckRemoteWhileTts, setDuckRemoteWhileTts] = useState(true);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const speakingTimers = useRef<Map<string, number>>(new Map());
   const joinKeyRef = useRef(0);
+
+  const {
+    enqueue: enqueueTranslationAudio,
+    clearQueue: clearTranslationAudioQueue,
+    dispose: disposeTranslationAudio,
+    setMuted: setTranslationTtsMuted,
+    setVolume: setTranslationTtsVol,
+    isPlaying: translationTtsIsPlaying,
+    queueDepth: translationTtsQueueDepth,
+  } = useSequentialAudioPlayback();
 
   const resolvedProfile = useMemo((): RoomJoinProfile | null => {
     const fromNav = profileFromLocationState(location.state);
@@ -105,53 +117,55 @@ export function Room(): JSX.Element {
     speakingTimers.current.set(id, t);
   }, []);
 
+  const handlePeerSignalingRef = useRef<(msg: WSMessageType) => void>(() => {});
+
   const onWsMessage = useCallback(
     (msg: WSMessageType) => {
+      handlePeerSignalingRef.current(msg);
       if (msg.type === "transcript_segment") {
         addLine({
           participantId: msg.participantId,
-          text: msg.text,
-          lang: msg.lang,
+          sourceText: msg.sourceText,
+          sourceLang: msg.sourceLang,
+          translations: msg.translations,
           ts: msg.ts,
         });
         markSpeaking(msg.participantId);
       }
       if (msg.type === "translated_audio") {
-        void (async () => {
-          try {
-            const bytes = base64ToUint8Array(msg.audioB64);
-            const ab = new ArrayBuffer(bytes.byteLength);
-            new Uint8Array(ab).set(bytes);
-            const ctx = playbackRef.current ?? new AudioContext();
-            playbackRef.current = ctx;
-            const audioBuffer = await ctx.decodeAudioData(ab);
-            const src = ctx.createBufferSource();
-            src.buffer = audioBuffer;
-            src.connect(ctx.destination);
-            src.start();
-          } catch (e) {
-            logger.error("playback_failed", { message: String(e) });
-          }
-        })();
+        if (participantId && msg.targetParticipantId !== participantId) {
+          return;
+        }
+        if (!translationTtsEnabled) return;
+        enqueueTranslationAudio(msg.audioB64);
       }
     },
-    [addLine, markSpeaking],
+    [
+      addLine,
+      enqueueTranslationAudio,
+      markSpeaking,
+      participantId,
+      translationTtsEnabled,
+    ],
   );
 
-  const { participants, roomActive, lastError, sendPing } = useRoom(wsUrl, {
-    onMessage: onWsMessage,
-  });
+  const { participants, roomActive, lastError, sendPing, sendRoomMessage } =
+    useRoom(wsUrl, {
+      onMessage: onWsMessage,
+    });
 
-  useEffect(() => {
-    if (!roomActive) setMicSessionActive(false);
-  }, [roomActive]);
+  const peerId = useMemo(() => {
+    const ids = Object.keys(participants);
+    if (ids.length !== 2 || !participantId) return null;
+    return ids.find((id) => id !== participantId) ?? null;
+  }, [participants, participantId]);
 
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      sendPing();
-    }, 30_000);
-    return () => window.clearInterval(id);
-  }, [sendPing]);
+  const myTargetLang = useMemo((): Language => {
+    if (participantId && participants[participantId]) {
+      return participants[participantId].targetLang;
+    }
+    return resolvedProfile?.targetLang ?? "en";
+  }, [participantId, participants, resolvedProfile]);
 
   const onBatchUploaded = useCallback(() => {
     if (participantId) markSpeaking(participantId);
@@ -168,6 +182,42 @@ export function Room(): JSX.Element {
     onPipelineLatency: setPipelineMs,
     onBatchUploaded,
   });
+
+  const peerAudio = useRoomPeerAudio({
+    selfId: participantId ?? "",
+    peerId,
+    mediaStream,
+    sendRoomMessage,
+    enabled: Boolean(roomActive && participantId && peerId && mediaStream),
+    remoteMuted: !peerVoiceEnabled,
+    remoteVolume: peerVoiceVolume,
+    duckWhileTts: duckRemoteWhileTts,
+    ttsIsPlaying: translationTtsIsPlaying,
+    remoteAudioRef,
+  });
+
+  useLayoutEffect(() => {
+    handlePeerSignalingRef.current = peerAudio.handleSignalingMessage;
+  }, [peerAudio.handleSignalingMessage]);
+
+  useEffect(() => {
+    setTranslationTtsMuted(!translationTtsEnabled);
+  }, [translationTtsEnabled, setTranslationTtsMuted]);
+
+  useEffect(() => {
+    setTranslationTtsVol(translationTtsVolume);
+  }, [translationTtsVolume, setTranslationTtsVol]);
+
+  useEffect(() => {
+    if (!roomActive) setMicSessionActive(false);
+  }, [roomActive]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      sendPing();
+    }, 30_000);
+    return () => window.clearInterval(id);
+  }, [sendPing]);
 
   useLayoutEffect(() => {
     if (participantId && wsUrl) return;
@@ -263,16 +313,9 @@ export function Room(): JSX.Element {
   }, []);
 
   const stopPlayback = useCallback(async (): Promise<void> => {
-    const ctx = playbackRef.current;
-    playbackRef.current = null;
-    if (ctx) {
-      try {
-        await ctx.close();
-      } catch {
-        /* ignore */
-      }
-    }
-  }, []);
+    clearTranslationAudioQueue();
+    await disposeTranslationAudio();
+  }, [clearTranslationAudioQueue, disposeTranslationAudio]);
 
   const onConfirmEndCall = useCallback(async (): Promise<void> => {
     setEndCallError(null);
@@ -340,10 +383,11 @@ export function Room(): JSX.Element {
             onChange={setFormTargetLang}
           />
           <p className="text-xs text-room-muted">
-            <strong className="text-slate-300">Testing translation:</strong> open a
-            second browser (or incognito), join the same room, set one side
-            English→Spanish and the other Spanish→English. When one speaks, the
-            other should hear translated TTS in their target language.
+            <strong className="text-slate-300">How it works:</strong> open a second
+            browser or incognito, join the same room, and set complementary languages
+            (for example English→Spanish and Spanish→English). You get live
+            WebRTC voices between participants plus translated speech (TTS) in your
+            chosen &quot;hear&quot; language. Use headphones for the best experience.
           </p>
           {joinError ? (
             <p className="text-sm text-rose-400" role="alert">
@@ -396,6 +440,8 @@ export function Room(): JSX.Element {
         error={endCallError}
       />
 
+      <audio ref={remoteAudioRef} className="hidden" autoPlay playsInline />
+
       <header className="sticky top-0 z-20 border-b border-slate-800/80 bg-room-bg/90 px-4 py-4 backdrop-blur supports-[backdrop-filter]:bg-room-bg/75">
         <div className="mx-auto flex max-w-6xl flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
@@ -408,6 +454,9 @@ export function Room(): JSX.Element {
             <p className="mt-1 text-sm text-room-muted">
               {isCapturing ? "Microphone live" : "Starting microphone…"}
               {micError ? ` · ${micError}` : ""}
+              {peerId
+                ? " · Live peer audio (WebRTC) when enabled below"
+                : " · Peer audio connects automatically when two people are in the room"}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:justify-end">
@@ -470,21 +519,121 @@ export function Room(): JSX.Element {
               />
             </section>
 
+            <section className="space-y-3 rounded-xl border border-slate-800 bg-room-panel p-4">
+              <h2 className="text-sm font-medium uppercase tracking-wide text-room-muted">
+                Listening
+              </h2>
+              <p className="text-xs text-room-muted">
+                Raw voices use WebRTC between browsers. Translated voice is AI TTS in
+                your &quot;hear&quot; language, played one clip at a time so it does
+                not overlap. Headphones reduce echo if both are on.
+              </p>
+              <div className="mt-3 flex flex-col gap-3 text-sm">
+                <label className="flex cursor-pointer items-center gap-2 text-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={peerVoiceEnabled}
+                    onChange={(e) => setPeerVoiceEnabled(e.target.checked)}
+                    className="rounded border-slate-600"
+                  />
+                  Live peer voices (WebRTC)
+                </label>
+                <div className="flex flex-wrap items-center gap-2 pl-6 text-xs text-room-muted">
+                  <span>Peer volume</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={Math.round(peerVoiceVolume * 100)}
+                    onChange={(e) =>
+                      setPeerVoiceVolume(Number(e.target.value) / 100)
+                    }
+                    disabled={!peerVoiceEnabled}
+                    className="w-32"
+                  />
+                </div>
+                <label className="flex cursor-pointer items-center gap-2 text-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={translationTtsEnabled}
+                    onChange={(e) => setTranslationTtsEnabled(e.target.checked)}
+                    className="rounded border-slate-600"
+                  />
+                  Translated voice (AI TTS)
+                </label>
+                <div className="flex flex-wrap items-center gap-2 pl-6 text-xs text-room-muted">
+                  <span>TTS volume</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={Math.round(translationTtsVolume * 100)}
+                    onChange={(e) =>
+                      setTranslationTtsVolume(Number(e.target.value) / 100)
+                    }
+                    disabled={!translationTtsEnabled}
+                    className="w-32"
+                  />
+                </div>
+                <label className="flex cursor-pointer items-center gap-2 text-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={duckRemoteWhileTts}
+                    onChange={(e) => setDuckRemoteWhileTts(e.target.checked)}
+                    className="rounded border-slate-600"
+                  />
+                  Lower peer volume while translated TTS is playing
+                </label>
+                <p className="text-xs text-slate-500">
+                  TTS queue: {translationTtsQueueDepth}
+                  {translationTtsIsPlaying ? " · playing" : ""}
+                </p>
+              </div>
+            </section>
+
             <section className="space-y-3">
               <h2 className="text-sm font-medium uppercase tracking-wide text-room-muted">
-                Your audio
+                Your microphone
               </h2>
               <AudioVisualizer stream={mediaStream} />
             </section>
           </div>
 
           <section className="flex min-h-0 flex-col gap-3 lg:sticky lg:top-28">
-            <h2 className="text-sm font-medium uppercase tracking-wide text-room-muted">
-              Transcript
-            </h2>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-medium uppercase tracking-wide text-room-muted">
+                Transcript
+              </h2>
+              <div className="flex gap-1 rounded-lg border border-slate-700 p-0.5 text-xs">
+                <button
+                  type="button"
+                  className={`rounded-md px-2 py-1 ${
+                    transcriptMode === "mine"
+                      ? "bg-slate-700 text-white"
+                      : "text-room-muted hover:text-slate-200"
+                  }`}
+                  onClick={() => setTranscriptMode("mine")}
+                >
+                  My language
+                </button>
+                <button
+                  type="button"
+                  className={`rounded-md px-2 py-1 ${
+                    transcriptMode === "original"
+                      ? "bg-slate-700 text-white"
+                      : "text-room-muted hover:text-slate-200"
+                  }`}
+                  onClick={() => setTranscriptMode("original")}
+                >
+                  Original
+                </button>
+              </div>
+            </div>
             <TranscriptPanel
               lines={lines}
               participantNames={participantNames}
+              viewerTargetLang={myTargetLang}
+              transcriptMode={transcriptMode}
               className="min-h-[280px] max-h-[min(560px,calc(100vh-14rem))] lg:max-h-[calc(100vh-10rem)]"
             />
           </section>

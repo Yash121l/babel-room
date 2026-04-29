@@ -385,48 +385,61 @@ app.post("/api/rooms/:roomId/audio", async (c) => {
       timestampMs: body.timestampMs,
     };
 
-    const onTranscriptReady = async (e: {
-      transcript: string;
-      sourceLang: Language;
-    }): Promise<void> => {
-      await stub.fetch(
-        doInternalRequest("/internal/broadcast-transcript", requestId, {
-          participantId: body.participantId,
-          text: e.transcript,
-          lang: e.sourceLang,
-          ts: body.timestampMs,
-        }),
-      );
-    };
-
     const pipelineStarted = Date.now();
     const result = await runAudioPipeline(chunk, c.env, {
       targetLanguages,
       spokenLanguageHint: hints?.sourceLang ?? undefined,
       whisperVocabHint: hints?.whisperVocabHint ?? null,
-      onTranscriptReady,
     });
     const pipelineWallMs = Date.now() - pipelineStarted;
+
+    let transcriptSegment:
+      | {
+          ts: number;
+          sourceText: string;
+          sourceLang: Language;
+          translations: Record<string, string>;
+        }
+      | undefined;
+    if (result.transcript.trim().length > 0) {
+      const safeText = sanitizeTranscriptText(result.transcript);
+      if (safeText.length > 0) {
+        const translations: Record<string, string> = {};
+        for (const [lang, text] of Object.entries(result.translations)) {
+          const t = typeof text === "string" ? text.trim() : "";
+          if (t.length > 0) translations[lang] = t;
+        }
+        transcriptSegment = {
+          ts: body.timestampMs,
+          sourceText: safeText,
+          sourceLang: result.sourceLang,
+          translations,
+        };
+      }
+    }
 
     await stub.fetch(
       doInternalRequest("/broadcast-pipeline-result", requestId, {
         participantId: body.participantId,
         pipelineResult: result,
+        transcriptSegment,
       }),
     );
 
     if (result.transcript.length > 0) {
       const safeText = sanitizeTranscriptText(result.transcript);
-      const segId = crypto.randomUUID();
-      await insertTranscriptSegment(c.env.DB, {
-        id: segId,
-        roomId,
-        participantId: body.participantId,
-        sourceText: safeText,
-        sourceLanguage: result.sourceLang,
-        startedAt: body.timestampMs,
-        durationMs: result.durationMs,
-      });
+      if (safeText.length > 0) {
+        const segId = crypto.randomUUID();
+        await insertTranscriptSegment(c.env.DB, {
+          id: segId,
+          roomId,
+          participantId: body.participantId,
+          sourceText: safeText,
+          sourceLanguage: result.sourceLang,
+          startedAt: body.timestampMs,
+          durationMs: result.durationMs,
+        });
+      }
     }
 
     console.log(
@@ -617,25 +630,33 @@ app.post("/api/rooms/:roomId/dev/inject-transcript", async (c) => {
     const now = Date.now();
     let injected = 0;
     for (const seg of segments) {
-      const safeText = sanitizeTranscriptText(seg.text);
+      const safeText = sanitizeTranscriptText(seg.sourceText);
       if (safeText.length === 0) continue;
       const segId = crypto.randomUUID();
       const ts = now + injected;
       injected += 1;
+      const translations: Record<string, string> = {};
+      if (seg.translations) {
+        for (const [lang, text] of Object.entries(seg.translations)) {
+          const t = text.trim();
+          if (t.length > 0) translations[lang] = t;
+        }
+      }
       await insertTranscriptSegment(c.env.DB, {
         id: segId,
         roomId,
         participantId,
         sourceText: safeText,
-        sourceLanguage: seg.lang,
+        sourceLanguage: seg.sourceLang,
         startedAt: ts,
         durationMs: 0,
       });
       await stub.fetch(
         doInternalRequest("/internal/broadcast-transcript", requestId, {
           participantId,
-          text: safeText,
-          lang: seg.lang,
+          sourceText: safeText,
+          sourceLang: seg.sourceLang,
+          translations,
           ts,
         }),
       );

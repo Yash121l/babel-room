@@ -27,7 +27,11 @@ Full Worker + static assets on a **single** port (no Vite): `cd apps/worker && n
 
 - **Copy invite link** in the room copies `/room/<code>`. Guests who open it get either your saved name/languages on this browser (`localStorage`) or a short **join** form (no more dead-end “start from home” when pasting a URL).
 - Home URL with **`?join=xxxxxxxx`** pre-fills the 8-character join field (e.g. share `http://localhost:5173/?join=abcd1234`).
-- **Real-time translation check:** use two profiles with **opposite** language pairs (e.g. Tab A: speak **English**, hear **Spanish**; Tab B or incognito: speak **Spanish**, hear **English**). Join the same room, allow the microphone on both, then speak from one side; the other should see transcript lines and hear **translated TTS** in their chosen “hear” language. If someone’s “hear” language **matches** what you spoke (e.g. they hear English and you spoke English), you still get **TTS playback** of that line so they are not silent.
+- **Real-time translation check:** use two profiles with **opposite** language pairs (e.g. Tab A: speak **English**, hear **Spanish**; Tab B or incognito: speak **Spanish**, hear **English**). Join the same room, allow the microphone on both, then speak from one side. With **two** participants in the room, the UI enables **WebRTC** so you hear each other’s natural voices; **translated TTS** (played sequentially so clips do not overlap) matches each listener’s “hear” language. The transcript can be shown in **your language** or **original** from toggles in the room. If someone’s “hear” language **matches** what you spoke, you still get **TTS playback** of that line so they are not silent.
+
+### WebRTC and NAT (TURN)
+
+Peer audio uses **WebRTC** with a default **STUN** server (`stun:stun.l.google.com:19302`). On restrictive networks you may need **TURN**. Set **`VITE_WEBRTC_ICE_SERVERS`** when building the web app to a JSON array of [`RTCIceServer`](https://developer.mozilla.org/en-US/docs/Web/API/RTCIceServer) objects (same shape as `RTCConfiguration.iceServers`), for example credentials from a TURN host. **Headphones** are strongly recommended when both raw peer audio and translated TTS are enabled, to reduce echo.
 
 ---
 

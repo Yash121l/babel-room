@@ -1,4 +1,4 @@
-import type { Participant, WSMessageType } from "@babel-room/shared";
+import type { Participant, RoomClientMessage, WSMessageType } from "@babel-room/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   INITIAL_BACKOFF_MS,
@@ -27,6 +27,7 @@ export function useRoom(
   roomActive: boolean;
   lastError: string | null;
   sendPing: () => void;
+  sendRoomMessage: (msg: RoomClientMessage) => boolean;
 } {
   const { onMessage } = options;
   const [participants, setParticipants] = useState<Record<string, Participant>>(
@@ -159,5 +160,16 @@ export function useRoom(
     }
   }, []);
 
-  return { participants, roomActive, lastError, sendPing };
+  const sendRoomMessage = useCallback((msg: RoomClientMessage): boolean => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    try {
+      ws.send(JSON.stringify(msg));
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  return { participants, roomActive, lastError, sendPing, sendRoomMessage };
 }

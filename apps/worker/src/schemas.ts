@@ -33,15 +33,25 @@ export const audioChunkBodySchema = z.object({
 
 export type AudioChunkBody = z.infer<typeof audioChunkBodySchema>;
 
+const pipelineResultSchema = z.object({
+  transcript: z.string(),
+  sourceLang: languageSchema,
+  translations: z.record(z.string(), z.string()),
+  audioTracks: z.record(z.string(), z.string()),
+  durationMs: z.number().nonnegative(),
+});
+
 export const pipelineBroadcastBodySchema = z.object({
   participantId: participantIdSchema,
-  pipelineResult: z.object({
-    transcript: z.string(),
-    sourceLang: languageSchema,
-    translations: z.record(z.string(), z.string()),
-    audioTracks: z.record(z.string(), z.string()),
-    durationMs: z.number().nonnegative(),
-  }),
+  pipelineResult: pipelineResultSchema,
+  transcriptSegment: z
+    .object({
+      ts: z.number().int().nonnegative(),
+      sourceText: z.string().min(1).max(8000),
+      sourceLang: languageSchema,
+      translations: z.record(z.string(), z.string()),
+    })
+    .optional(),
 });
 
 export const devInjectTranscriptBodySchema = z.object({
@@ -49,8 +59,9 @@ export const devInjectTranscriptBodySchema = z.object({
   segments: z
     .array(
       z.object({
-        text: z.string().min(1).max(4000),
-        lang: languageSchema,
+        sourceText: z.string().min(1).max(4000),
+        sourceLang: languageSchema,
+        translations: z.record(languageSchema, z.string()).optional(),
       }),
     )
     .min(1)

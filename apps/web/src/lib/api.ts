@@ -130,7 +130,11 @@ export async function devListParticipants(
 export async function devInjectTranscript(
   roomId: string,
   participantId: string,
-  segments: { text: string; lang: Language }[],
+  segments: {
+    sourceText: string;
+    sourceLang: Language;
+    translations?: Partial<Record<Language, string>>;
+  }[],
 ): Promise<{ injected: number }> {
   const res = await fetch(
     `${API_BASE}/api/rooms/${roomId}/dev/inject-transcript`,

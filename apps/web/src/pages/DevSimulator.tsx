@@ -9,18 +9,49 @@ import {
 import { loadDevFixtureToneBase64 } from "../lib/devFixtureTone";
 import { logger } from "../lib/logger";
 
-const PRESETS: Record<string, { text: string; lang: Language }[]> = {
+const PRESETS: Record<
+  string,
+  {
+    sourceText: string;
+    sourceLang: Language;
+    translations?: Partial<Record<Language, string>>;
+  }[]
+> = {
   es: [
-    { text: "Hola, ¿cómo está el proyecto hoy?", lang: "es" },
-    { text: "Necesitamos revisar el presupuesto.", lang: "es" },
+    {
+      sourceText: "Hola, ¿cómo está el proyecto hoy?",
+      sourceLang: "es",
+      translations: { en: "Hello, how is the project today?" },
+    },
+    {
+      sourceText: "Necesitamos revisar el presupuesto.",
+      sourceLang: "es",
+      translations: { en: "We need to review the budget." },
+    },
   ],
   ja: [
-    { text: "こんにちは、会議を始めます。", lang: "ja" },
-    { text: "来週のリリースについて話し合いましょう。", lang: "ja" },
+    {
+      sourceText: "こんにちは、会議を始めます。",
+      sourceLang: "ja",
+      translations: { en: "Hello, we will begin the meeting." },
+    },
+    {
+      sourceText: "来週のリリースについて話し合いましょう。",
+      sourceLang: "ja",
+      translations: { en: "Let's discuss next week's release." },
+    },
   ],
   fr: [
-    { text: "Bonjour à tous, merci d'être là.", lang: "fr" },
-    { text: "Les décisions seront prises après débat.", lang: "fr" },
+    {
+      sourceText: "Bonjour à tous, merci d'être là.",
+      sourceLang: "fr",
+      translations: { en: "Hello everyone, thank you for being here." },
+    },
+    {
+      sourceText: "Les décisions seront prises après débat.",
+      sourceLang: "fr",
+      translations: { en: "Decisions will be made after debate." },
+    },
   ],
 };
 

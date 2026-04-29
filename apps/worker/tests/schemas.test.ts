@@ -78,6 +78,12 @@ describe("pipelineBroadcastBodySchema", () => {
           audioTracks: { es: "qqqq" },
           durationMs: 10,
         },
+        transcriptSegment: {
+          ts: 1,
+          sourceText: "hi",
+          sourceLang: "en",
+          translations: { es: "hola" },
+        },
       }).success,
     ).toBe(true);
   });

@@ -2,6 +2,7 @@ import type {
   Language,
   Participant,
   PipelineResult,
+  RoomClientMessage,
   RoomState,
   WSMessageType,
 } from "@babel-room/shared";
@@ -103,8 +104,9 @@ export class RoomDO extends DurableObject<Env> {
     }
     let body: {
       participantId?: string;
-      text?: string;
-      lang?: Language;
+      sourceText?: string;
+      sourceLang?: Language;
+      translations?: Partial<Record<Language, string>>;
       ts?: number;
     };
     try {
@@ -112,16 +114,25 @@ export class RoomDO extends DurableObject<Env> {
     } catch {
       return Response.json({ ok: false, reason: "INVALID_JSON" }, { status: 400 });
     }
-    const text = (body.text ?? "").trim();
-    if (!body.participantId || !text || !body.lang) {
+    const sourceText = (body.sourceText ?? "").trim();
+    if (!body.participantId || !sourceText || !body.sourceLang) {
       return Response.json({ ok: false, reason: "INVALID_BODY" }, { status: 400 });
+    }
+
+    const translations: Partial<Record<Language, string>> = {};
+    const raw = body.translations ?? {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (typeof v === "string" && v.trim().length > 0) {
+        translations[k as Language] = v.trim();
+      }
     }
 
     this.broadcast({
       type: "transcript_segment",
       participantId: body.participantId,
-      text,
-      lang: body.lang,
+      sourceText,
+      sourceLang: body.sourceLang,
+      translations,
       ts: body.ts ?? Date.now(),
     });
 
@@ -290,9 +301,34 @@ export class RoomDO extends DurableObject<Env> {
     if (!participantId) return;
 
     try {
-      const msg = JSON.parse(message as string) as WSMessageType;
+      const msg = JSON.parse(message as string) as RoomClientMessage | WSMessageType;
       if (msg.type === "ping") {
         ws.send(JSON.stringify({ type: "pong" } satisfies WSMessageType));
+        return;
+      }
+      if (msg.type === "webrtc_signal") {
+        const to = msg.to;
+        if (!to || to === participantId || !this.participants.has(to)) {
+          return;
+        }
+        const sockets = this.ctx.getWebSockets();
+        const wsByParticipant = new Map<string, WebSocket>();
+        for (const s of sockets) {
+          const t = this.ctx.getTags(s);
+          const pid = t[0];
+          if (pid) wsByParticipant.set(pid, s);
+        }
+        const targetWs = wsByParticipant.get(to);
+        if (!targetWs) return;
+        this.sendToWebSocket(targetWs, {
+          type: "webrtc_signal",
+          from: participantId,
+          to,
+          kind: msg.kind,
+          sdp: msg.sdp,
+          candidate: msg.candidate,
+        });
+        return;
       }
     } catch {
       ws.send(
@@ -353,17 +389,23 @@ export class RoomDO extends DurableObject<Env> {
   }
 
   private async handlePipelineResult(request: Request): Promise<Response> {
-    let parsed: { participantId: string; pipelineResult: PipelineResult };
-    try {
-      parsed = (await request.json()) as {
-        participantId: string;
-        pipelineResult: PipelineResult;
+    let parsed: {
+      participantId: string;
+      pipelineResult: PipelineResult;
+      transcriptSegment?: {
+        ts: number;
+        sourceText: string;
+        sourceLang: Language;
+        translations: Record<string, string>;
       };
+    };
+    try {
+      parsed = (await request.json()) as typeof parsed;
     } catch {
       return new Response(JSON.stringify({ ok: false }), { status: 400 });
     }
 
-    const { participantId, pipelineResult } = parsed;
+    const { participantId, pipelineResult, transcriptSegment } = parsed;
 
     const sockets = this.ctx.getWebSockets();
     const wsByParticipant = new Map<string, WebSocket>();
@@ -385,6 +427,23 @@ export class RoomDO extends DurableObject<Env> {
         targetParticipantId: pid,
         audioB64,
         lang: targetLang,
+      });
+    }
+
+    if (transcriptSegment) {
+      const translations: Partial<Record<Language, string>> = {};
+      for (const [k, v] of Object.entries(transcriptSegment.translations)) {
+        if (typeof v === "string" && v.trim().length > 0) {
+          translations[k as Language] = v.trim();
+        }
+      }
+      this.broadcast({
+        type: "transcript_segment",
+        participantId,
+        sourceText: transcriptSegment.sourceText,
+        sourceLang: transcriptSegment.sourceLang,
+        translations,
+        ts: transcriptSegment.ts,
       });
     }
 

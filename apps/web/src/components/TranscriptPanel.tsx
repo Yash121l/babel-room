@@ -15,12 +15,29 @@ const colors: Record<Language, string> = {
   ko: "border-l-violet-400",
 };
 
+function lineDisplay(
+  line: TranscriptLine,
+  mode: "mine" | "original",
+  viewerTargetLang: Language,
+): { text: string; lang: Language } {
+  if (mode === "original") {
+    return { text: line.sourceText, lang: line.sourceLang };
+  }
+  const t = line.translations[viewerTargetLang]?.trim();
+  if (t) return { text: t, lang: viewerTargetLang };
+  return { text: line.sourceText, lang: line.sourceLang };
+}
+
 export function TranscriptPanel(props: {
   lines: TranscriptLine[];
   participantNames: Record<string, string>;
+  /** Language you want to read/hear (captions in this language when mode is mine). */
+  viewerTargetLang: Language;
+  transcriptMode: "mine" | "original";
   className?: string;
 }): JSX.Element {
-  const { lines, participantNames, className } = props;
+  const { lines, participantNames, viewerTargetLang, transcriptMode, className } =
+    props;
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -34,18 +51,23 @@ export function TranscriptPanel(props: {
       {lines.length === 0 ? (
         <p className="text-sm text-room-muted">Transcript appears as people speak.</p>
       ) : null}
-      {lines.map((line) => (
-        <div
-          key={line.id}
-          className={`rounded-r-md border-l-4 bg-slate-900/60 px-3 py-2 text-sm ${colors[line.lang]}`}
-        >
-          <div className="text-xs text-room-muted">
-            {participantNames[line.participantId] ?? line.participantId} ·{" "}
-            {line.lang}
+      {lines.map((line) => {
+        const { text, lang } = lineDisplay(line, transcriptMode, viewerTargetLang);
+        return (
+          <div
+            key={line.id}
+            className={`rounded-r-md border-l-4 bg-slate-900/60 px-3 py-2 text-sm ${colors[lang]}`}
+          >
+            <div className="text-xs text-room-muted">
+              {participantNames[line.participantId] ?? line.participantId} · {lang}
+              {transcriptMode === "mine" && lang !== line.sourceLang ? (
+                <span className="text-slate-500"> (from {line.sourceLang})</span>
+              ) : null}
+            </div>
+            <div className="mt-1 text-slate-100">{text}</div>
           </div>
-          <div className="mt-1 text-slate-100">{line.text}</div>
-        </div>
-      ))}
+        );
+      })}
       <div ref={bottomRef} />
     </div>
   );
