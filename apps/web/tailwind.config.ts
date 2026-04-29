@@ -10,6 +10,7 @@ export default {
           panel: "#121a2e",
           accent: "#38bdf8",
           muted: "#64748b",
+          danger: "#f87171",
         },
       },
     },

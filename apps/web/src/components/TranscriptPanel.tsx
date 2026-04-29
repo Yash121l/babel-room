@@ -18,8 +18,9 @@ const colors: Record<Language, string> = {
 export function TranscriptPanel(props: {
   lines: TranscriptLine[];
   participantNames: Record<string, string>;
+  className?: string;
 }): JSX.Element {
-  const { lines, participantNames } = props;
+  const { lines, participantNames, className } = props;
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -27,7 +28,9 @@ export function TranscriptPanel(props: {
   }, [lines.length]);
 
   return (
-    <div className="flex max-h-80 flex-col gap-2 overflow-y-auto rounded-xl border border-slate-800 bg-room-panel p-3">
+    <div
+      className={`flex flex-col gap-2 overflow-y-auto rounded-xl border border-slate-800 bg-room-panel p-3 ${className ?? "max-h-80"}`}
+    >
       {lines.length === 0 ? (
         <p className="text-sm text-room-muted">Transcript appears as people speak.</p>
       ) : null}

@@ -154,6 +154,66 @@ app.get("/api/rooms/:roomId", async (c) => {
   }
 });
 
+app.get("/api/rooms/:roomId/summary", async (c) => {
+  const requestId = c.get("requestId");
+  const startedAt = c.get("startedAt");
+  try {
+    const roomIdParse = roomIdParamSchema.safeParse(c.req.param("roomId"));
+    if (!roomIdParse.success) {
+      return structuredError(c, "INVALID_ROOM", "Invalid room id", 400);
+    }
+    const roomId = roomIdParse.data;
+
+    const room = await getRoomById(c.env.DB, roomId);
+    if (!room) {
+      return structuredError(c, "NOT_FOUND", "Room not found", 404);
+    }
+
+    const key = `rooms/${roomId}/summary.json`;
+    const obj = await c.env.TRANSCRIPTS.get(key);
+    if (!obj) {
+      return c.json({ status: "pending" as const }, 200, {
+        "X-Request-Id": requestId,
+        "X-Pipeline-Duration-Ms": "0",
+      });
+    }
+
+    const text = await obj.text();
+    const parsed = JSON.parse(text) as {
+      roomId?: string;
+      summary?: string;
+      segmentCount?: number;
+      generatedAt?: number;
+    };
+
+    return c.json(
+      {
+        status: "ready" as const,
+        roomId: parsed.roomId ?? roomId,
+        summary: parsed.summary ?? "",
+        segmentCount: parsed.segmentCount ?? 0,
+        generatedAt: parsed.generatedAt ?? 0,
+      },
+      200,
+      {
+        "X-Request-Id": requestId,
+        "X-Pipeline-Duration-Ms": "0",
+      },
+    );
+  } catch (e) {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "get_summary_failed",
+        requestId,
+        message: String(e),
+        durationMs: Date.now() - startedAt,
+      }),
+    );
+    return structuredError(c, "INTERNAL", "Failed to load summary", 500);
+  }
+});
+
 app.post("/api/rooms/:roomId/join", async (c) => {
   const requestId = c.get("requestId");
   const startedAt = c.get("startedAt");
@@ -406,6 +466,26 @@ app.delete("/api/rooms/:roomId", async (c) => {
       return structuredError(c, "NOT_FOUND", "Room not found", 404);
     }
 
+    if (room.ended_at != null) {
+      console.log(
+        JSON.stringify({
+          level: "info",
+          event: "room_delete_idempotent",
+          roomId,
+          requestId,
+          durationMs: Date.now() - startedAt,
+        }),
+      );
+      return c.json(
+        { success: true, alreadyEnded: true },
+        200,
+        {
+          "X-Request-Id": requestId,
+          "X-Pipeline-Duration-Ms": "0",
+        },
+      );
+    }
+
     await markRoomEnded(c.env.DB, roomId, Date.now());
 
     const stub = c.env.ROOM.get(c.env.ROOM.idFromName(roomId));
@@ -427,7 +507,7 @@ app.delete("/api/rooms/:roomId", async (c) => {
     );
 
     return c.json(
-      { success: true },
+      { success: true, alreadyEnded: false },
       200,
       {
         "X-Request-Id": requestId,

@@ -1,14 +1,15 @@
 import type { Language, WSMessageType } from "@babel-room/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   AudioVisualizer,
+  EndCallDialog,
   LatencyIndicator,
   ParticipantGrid,
   TranscriptPanel,
 } from "../components";
 import { useRoom, useTranscript, useWebRTC } from "../hooks";
-import { joinRoom } from "../lib/api";
+import { endRoom, joinRoom } from "../lib/api";
 import { logger } from "../lib/logger";
 
 function base64ToUint8Array(b64: string): Uint8Array {
@@ -21,8 +22,15 @@ function base64ToUint8Array(b64: string): Uint8Array {
   return bytes;
 }
 
+function joinUrlForRoom(roomId: string): string {
+  const path = `/room/${roomId}`;
+  if (typeof window === "undefined") return path;
+  return `${window.location.origin}${path}`;
+}
+
 export function Room(): JSX.Element {
   const { roomId: roomIdParam } = useParams();
+  const navigate = useNavigate();
   const location = useLocation() as {
     state?: {
       displayName?: string;
@@ -37,6 +45,11 @@ export function Room(): JSX.Element {
   const [joinError, setJoinError] = useState<string | null>(null);
   const [pipelineMs, setPipelineMs] = useState<number | null>(null);
   const [speakingIds, setSpeakingIds] = useState<Set<string>>(() => new Set());
+  const [micSessionActive, setMicSessionActive] = useState(true);
+  const [endDialogOpen, setEndDialogOpen] = useState(false);
+  const [endCallBusy, setEndCallBusy] = useState(false);
+  const [endCallError, setEndCallError] = useState<string | null>(null);
+  const [copyDone, setCopyDone] = useState(false);
   const playbackRef = useRef<AudioContext | null>(null);
   const speakingTimers = useRef<Map<string, number>>(new Map());
 
@@ -90,9 +103,13 @@ export function Room(): JSX.Element {
     [addLine, markSpeaking],
   );
 
-  const { participants, lastError, sendPing } = useRoom(wsUrl, {
+  const { participants, roomActive, lastError, sendPing } = useRoom(wsUrl, {
     onMessage: onWsMessage,
   });
+
+  useEffect(() => {
+    if (!roomActive) setMicSessionActive(false);
+  }, [roomActive]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -105,10 +122,14 @@ export function Room(): JSX.Element {
     if (participantId) markSpeaking(participantId);
   }, [markSpeaking, participantId]);
 
+  const captureEnabled = Boolean(
+    wsUrl && participantId && micSessionActive && roomActive,
+  );
+
   const { isCapturing, error: micError, mediaStream } = useWebRTC({
     roomId,
     participantId,
-    enabled: Boolean(wsUrl && participantId),
+    enabled: captureEnabled,
     onPipelineLatency: setPipelineMs,
     onBatchUploaded,
   });
@@ -158,6 +179,45 @@ export function Room(): JSX.Element {
     };
   }, []);
 
+  const stopPlayback = useCallback(async (): Promise<void> => {
+    const ctx = playbackRef.current;
+    playbackRef.current = null;
+    if (ctx) {
+      try {
+        await ctx.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  }, []);
+
+  const onConfirmEndCall = useCallback(async (): Promise<void> => {
+    setEndCallError(null);
+    setEndCallBusy(true);
+    try {
+      await endRoom(roomId);
+      setMicSessionActive(false);
+      await stopPlayback();
+      setEndDialogOpen(false);
+      navigate(`/room/${roomId}/summary`);
+    } catch {
+      setEndCallError("Could not end the call. Try again.");
+    } finally {
+      setEndCallBusy(false);
+    }
+  }, [navigate, roomId, stopPlayback]);
+
+  const onCopyLink = useCallback(async (): Promise<void> => {
+    const url = joinUrlForRoom(roomId);
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopyDone(true);
+      window.setTimeout(() => setCopyDone(false), 2000);
+    } catch {
+      logger.error("clipboard_failed", {});
+    }
+  }, [roomId]);
+
   if (joinError) {
     return (
       <div className="mx-auto max-w-lg px-4 py-16 text-center text-rose-400">
@@ -168,55 +228,124 @@ export function Room(): JSX.Element {
 
   if (!participantId || !wsUrl) {
     return (
-      <div className="mx-auto max-w-lg px-4 py-16 text-center text-room-muted">
-        Joining room…
+      <div className="mx-auto flex max-w-lg flex-col items-center gap-4 px-4 py-24">
+        <div
+          className="h-10 w-10 animate-spin rounded-full border-2 border-room-accent border-t-transparent"
+          aria-hidden
+        />
+        <p className="text-sm text-room-muted">Joining room…</p>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-6 px-4 py-8">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold text-white">Room {roomId}</h1>
-          <p className="text-sm text-room-muted">
-            {isCapturing ? "Microphone live" : "Starting microphone…"}
-            {micError ? ` · ${micError}` : ""}
-          </p>
+    <div className="min-h-screen pb-10">
+      <EndCallDialog
+        open={endDialogOpen}
+        onClose={() => {
+          if (!endCallBusy) {
+            setEndDialogOpen(false);
+            setEndCallError(null);
+          }
+        }}
+        onConfirm={() => void onConfirmEndCall()}
+        busy={endCallBusy}
+        error={endCallError}
+      />
+
+      <header className="sticky top-0 z-20 border-b border-slate-800/80 bg-room-bg/90 px-4 py-4 backdrop-blur supports-[backdrop-filter]:bg-room-bg/75">
+        <div className="mx-auto flex max-w-6xl flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="truncate text-xl font-semibold text-white sm:text-2xl">
+              Room{" "}
+              <span className="font-mono tracking-wide text-room-accent">
+                {roomId}
+              </span>
+            </h1>
+            <p className="mt-1 text-sm text-room-muted">
+              {isCapturing ? "Microphone live" : "Starting microphone…"}
+              {micError ? ` · ${micError}` : ""}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            <button
+              type="button"
+              className="rounded-lg border border-slate-600 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-800 sm:text-sm"
+              onClick={() => void onCopyLink()}
+            >
+              {copyDone ? "Copied" : "Copy room link"}
+            </button>
+            <LatencyIndicator pipelineMs={pipelineMs} />
+            <button
+              type="button"
+              className="rounded-lg bg-room-danger px-3 py-2 text-xs font-medium text-slate-950 hover:brightness-110 disabled:opacity-50 sm:text-sm"
+              disabled={!roomActive || endCallBusy}
+              onClick={() => {
+                setEndCallError(null);
+                setEndDialogOpen(true);
+              }}
+            >
+              End call
+            </button>
+          </div>
         </div>
-        <LatencyIndicator pipelineMs={pipelineMs} />
       </header>
 
-      {lastError ? (
-        <p className="text-sm text-amber-400" role="status">
-          {lastError}
-        </p>
-      ) : null}
+      <div className="mx-auto max-w-6xl px-4 pt-6">
+        {!roomActive ? (
+          <div
+            className="mb-4 rounded-lg border border-amber-900/60 bg-amber-950/30 px-4 py-3 text-sm text-amber-200"
+            role="status"
+          >
+            <p>This room has ended.</p>
+            <Link
+              to="/"
+              className="mt-2 inline-block text-room-accent underline-offset-2 hover:underline"
+            >
+              Back to home
+            </Link>
+          </div>
+        ) : null}
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-medium uppercase tracking-wide text-room-muted">
-          Participants
-        </h2>
-        <ParticipantGrid
-          participants={participants}
-          selfId={participantId}
-          speakingIds={speakingIds}
-        />
-      </section>
+        {lastError && roomActive ? (
+          <p className="mb-4 text-sm text-amber-400" role="status">
+            {lastError}
+          </p>
+        ) : null}
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-medium uppercase tracking-wide text-room-muted">
-          Your audio
-        </h2>
-        <AudioVisualizer stream={mediaStream} />
-      </section>
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(280px,380px)] lg:items-start">
+          <div className="flex min-w-0 flex-col gap-6">
+            <section className="space-y-3">
+              <h2 className="text-sm font-medium uppercase tracking-wide text-room-muted">
+                Participants
+              </h2>
+              <ParticipantGrid
+                participants={participants}
+                selfId={participantId}
+                speakingIds={speakingIds}
+              />
+            </section>
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-medium uppercase tracking-wide text-room-muted">
-          Transcript
-        </h2>
-        <TranscriptPanel lines={lines} participantNames={participantNames} />
-      </section>
+            <section className="space-y-3">
+              <h2 className="text-sm font-medium uppercase tracking-wide text-room-muted">
+                Your audio
+              </h2>
+              <AudioVisualizer stream={mediaStream} />
+            </section>
+          </div>
+
+          <section className="flex min-h-0 flex-col gap-3 lg:sticky lg:top-28">
+            <h2 className="text-sm font-medium uppercase tracking-wide text-room-muted">
+              Transcript
+            </h2>
+            <TranscriptPanel
+              lines={lines}
+              participantNames={participantNames}
+              className="min-h-[280px] max-h-[min(560px,calc(100vh-14rem))] lg:max-h-[calc(100vh-10rem)]"
+            />
+          </section>
+        </div>
+      </div>
     </div>
   );
 }

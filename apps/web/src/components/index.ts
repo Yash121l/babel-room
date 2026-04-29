@@ -1,3 +1,4 @@
+export { EndCallDialog } from "./EndCallDialog";
 export { AudioVisualizer } from "./AudioVisualizer";
 export { LanguageSelector } from "./LanguageSelector";
 export { LatencyIndicator } from "./LatencyIndicator";

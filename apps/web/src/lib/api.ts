@@ -69,3 +69,40 @@ export async function postAudioChunk(
   const result = (await res.json()) as PipelineResult;
   return { result, pipelineDurationMs };
 }
+
+export interface EndRoomResponse {
+  success: boolean;
+  alreadyEnded: boolean;
+}
+
+export async function endRoom(roomId: string): Promise<EndRoomResponse> {
+  const res = await fetch(`${API_BASE}/api/rooms/${roomId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    logger.error("end_room_failed", { status: res.status });
+    throw new Error("Failed to end call");
+  }
+  return (await res.json()) as EndRoomResponse;
+}
+
+export type RoomSummaryResponse =
+  | { status: "pending" }
+  | {
+      status: "ready";
+      roomId: string;
+      summary: string;
+      segmentCount: number;
+      generatedAt: number;
+    };
+
+export async function getRoomSummary(
+  roomId: string,
+): Promise<RoomSummaryResponse> {
+  const res = await fetch(`${API_BASE}/api/rooms/${roomId}/summary`);
+  if (!res.ok) {
+    logger.error("get_summary_failed", { status: res.status });
+    throw new Error("Failed to load summary");
+  }
+  return (await res.json()) as RoomSummaryResponse;
+}

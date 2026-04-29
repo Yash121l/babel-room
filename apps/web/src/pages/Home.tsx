@@ -96,9 +96,10 @@ export function Home(): JSX.Element {
           type="button"
           className="rounded-lg bg-room-accent px-4 py-2 text-sm font-medium text-slate-950 hover:bg-sky-300 disabled:opacity-50"
           disabled={busy}
+          aria-busy={busy}
           onClick={() => void onCreate()}
         >
-          Create room
+          {busy ? "Creating…" : "Create room"}
         </button>
 
         <div className="border-t border-slate-800 pt-4">
@@ -106,13 +107,21 @@ export function Home(): JSX.Element {
             <span className="text-room-muted">Join with code</span>
             <input
               id="joinCode"
-              className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-slate-100 outline-none focus:border-room-accent"
+              className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm tracking-wider text-slate-100 outline-none focus:border-room-accent"
               value={joinCode}
               maxLength={8}
               placeholder="abcd1234"
               onChange={(e) => setJoinCode(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") onJoin();
+              }}
+              autoCapitalize="none"
+              spellCheck={false}
             />
           </label>
+          <p className="mt-1 text-xs text-room-muted">
+            Use the 8-character code the host shared (letters and numbers).
+          </p>
           <button
             type="button"
             className="mt-3 w-full rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800"
