@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { PCM_BATCH_SAMPLES } from "../constants";
+import {
+  PCM_FLUSH_MAX_SAMPLES,
+  PCM_FLUSH_MIN_SAMPLES,
+  PCM_FLUSH_TARGET_SEC,
+  PCM_PERIODIC_FLUSH_MS,
+} from "../constants";
 import { postAudioChunk } from "../lib/api";
 import { logger } from "../lib/logger";
 
@@ -11,6 +16,14 @@ function floatTo16BitPCM(input: Float32Array): Int16Array {
       s < 0 ? Math.round(s * 0x8000) : Math.round(s * 0x7fff);
   }
   return buffer;
+}
+
+function flushThresholdSamples(sampleRateHz: number): number {
+  const raw = Math.round(sampleRateHz * PCM_FLUSH_TARGET_SEC);
+  return Math.min(
+    PCM_FLUSH_MAX_SAMPLES,
+    Math.max(PCM_FLUSH_MIN_SAMPLES, raw),
+  );
 }
 
 function int16ToBase64(samples: Int16Array): string {
@@ -107,7 +120,7 @@ export function useWebRTC(options: {
       if (flushTimer !== null) window.clearInterval(flushTimer);
       flushTimer = window.setInterval(() => {
         void flushBatch();
-      }, 750);
+      }, PCM_PERIODIC_FLUSH_MS);
     };
 
     const start = async (): Promise<void> => {
@@ -137,7 +150,8 @@ export function useWebRTC(options: {
           const data = ev.data;
           accumRef.current.push(data);
           sampleCountRef.current += data.length;
-          if (sampleCountRef.current >= PCM_BATCH_SAMPLES) {
+          const threshold = flushThresholdSamples(sampleRateRef.current);
+          if (sampleCountRef.current >= threshold) {
             void flushBatch();
           }
         };

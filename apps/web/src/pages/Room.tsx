@@ -539,7 +539,7 @@ export function Room(): JSX.Element {
         ) : null}
 
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1.15fr)_minmax(300px,1fr)] lg:items-start">
-          <section className="flex min-h-0 min-w-0 max-h-[min(88dvh,920px)] flex-col gap-3 lg:sticky lg:top-24 lg:max-h-[calc(100dvh-6.5rem)]">
+          <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 max-h-[min(88dvh,920px)] lg:sticky lg:top-24 lg:max-h-[calc(100dvh-6.5rem)]">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">

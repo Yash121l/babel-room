@@ -75,22 +75,21 @@ export function TranscriptPanel(props: {
     <div
       className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-700/80 bg-gradient-to-b from-slate-900/90 to-slate-950/95 shadow-lg shadow-black/20 ${className ?? ""}`}
     >
-      <div className="shrink-0 border-b border-slate-800/80 bg-slate-950/95 px-4 pb-3 pt-3 backdrop-blur-sm">
-        <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
+      <div className="shrink-0 border-b border-slate-800/80 bg-slate-950/95 px-3 py-2 backdrop-blur-sm sm:px-4">
+        <p className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
           Conversation
         </p>
-        <p className="mt-1 text-xs leading-relaxed text-slate-400">
+        <p className="mt-0.5 text-[11px] leading-snug text-slate-400 sm:text-xs">
           {transcriptMode === "mine" ? (
             <>
-              Captions in{" "}
-              <span className="font-medium text-sky-200">{viewerLabel}</span> (your
-              &quot;hear&quot; language). Scroll the list below.
+              <span className="font-medium text-sky-200">{viewerLabel}</span> captions
+              · scroll below
             </>
           ) : (
             <>
-              Raw transcript. Switch to{" "}
+              Raw lines ·{" "}
               <span className="font-medium text-sky-200">My language</span> for{" "}
-              {viewerLabel}.
+              {viewerLabel}
             </>
           )}
         </p>
@@ -114,7 +113,7 @@ export function TranscriptPanel(props: {
           </div>
         ) : null}
 
-        <div className="flex flex-col gap-3 pb-2">
+        <div className="flex flex-col gap-2 pb-2 sm:gap-2.5">
           {lines.map((line) => {
             const name = participantNames[line.participantId] ?? "Participant";
             const time = formatLineTime(line.ts);
@@ -131,71 +130,80 @@ export function TranscriptPanel(props: {
                 ? { text: line.sourceText, lang: line.sourceLang }
                 : { text: cap.text, lang: cap.lang };
             const grad = accent[primary.lang] ?? accent.en;
+            const spokenShort = LANGUAGE_LABEL[line.sourceLang] ?? line.sourceLang;
+            const captionShort = LANGUAGE_LABEL[primary.lang] ?? primary.lang;
 
             return (
               <article
                 key={line.id}
-                className={`relative overflow-hidden rounded-xl border bg-gradient-to-br p-4 ${grad}`}
+                className={`relative overflow-hidden rounded-lg border bg-gradient-to-br p-2.5 sm:p-3 ${grad}`}
               >
-                <div className="flex flex-wrap items-baseline justify-between gap-2 gap-y-1">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-800 text-sm font-semibold text-sky-200 ring-1 ring-slate-600"
-                      aria-hidden
-                    >
-                      {name.slice(0, 1).toUpperCase()}
-                    </span>
-                    <div className="min-w-0">
-                      <div className="truncate font-medium text-slate-100">{name}</div>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
-                        <span className="rounded bg-slate-800/80 px-1.5 py-0.5 font-mono text-slate-400">
-                          {time}
-                        </span>
-                        <span className="text-slate-600">·</span>
-                        <span className="rounded bg-slate-800/80 px-1.5 py-0.5 text-slate-400">
-                          Spoken: {LANGUAGE_LABEL[line.sourceLang] ?? line.sourceLang}
-                        </span>
-                      </div>
+                <div className="flex min-w-0 items-center gap-2">
+                  <span
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-800 text-xs font-semibold text-sky-200 ring-1 ring-slate-600 sm:h-8 sm:w-8 sm:text-sm"
+                    aria-hidden
+                  >
+                    {name.slice(0, 1).toUpperCase()}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+                      <span className="truncate text-sm font-medium text-slate-100">
+                        {name}
+                      </span>
+                      <span className="shrink-0 font-mono text-[10px] text-slate-500 sm:text-[11px]">
+                        {time}
+                      </span>
+                      <span className="hidden h-1 w-1 shrink-0 rounded-full bg-slate-600 sm:inline-block" />
+                      <span className="rounded bg-slate-800/90 px-1.5 py-px text-[10px] text-slate-400 ring-1 ring-slate-600/60">
+                        {spokenShort}
+                      </span>
+                      <span className="rounded-full bg-sky-950/80 px-1.5 py-px text-[10px] font-medium text-sky-200 ring-1 ring-sky-700/40">
+                        {transcriptMode === "mine" ? captionShort : "Original"}
+                      </span>
                     </div>
-                  </div>
-                  <div className="flex shrink-0 flex-wrap justify-end gap-1">
-                    <span className="rounded-full bg-sky-950/80 px-2.5 py-0.5 text-[11px] font-medium text-sky-200 ring-1 ring-sky-700/50">
-                      {transcriptMode === "mine"
-                        ? `Caption: ${LANGUAGE_LABEL[primary.lang] ?? primary.lang}`
-                        : "Original"}
-                    </span>
                   </div>
                 </div>
 
-                <p className="mt-3 text-base leading-relaxed text-slate-50">{primary.text}</p>
+                <p className="mt-2 text-sm leading-snug text-slate-50 sm:text-[15px]">
+                  {primary.text}
+                </p>
 
                 {transcriptMode === "mine" && showOriginalSub ? (
-                  <div className="mt-3 rounded-lg border border-slate-700/60 bg-black/20 px-3 py-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                      Original ({LANGUAGE_LABEL[line.sourceLang] ?? line.sourceLang})
-                    </p>
-                    <p className="mt-1 text-sm leading-relaxed text-slate-400">
+                  <details className="group mt-2 rounded-md border border-slate-700/50 bg-black/15">
+                    <summary className="cursor-pointer list-none px-2 py-1.5 text-[10px] font-medium text-slate-400 marker:hidden [&::-webkit-details-marker]:hidden">
+                      <span className="inline-flex items-center gap-1">
+                        <span className="text-slate-500 transition-transform group-open:rotate-90">
+                          ▸
+                        </span>
+                        Original ({spokenShort})
+                      </span>
+                    </summary>
+                    <p className="border-t border-slate-700/40 px-2 pb-2 pt-1 text-xs leading-snug text-slate-400">
                       {line.sourceText}
                     </p>
-                  </div>
+                  </details>
                 ) : null}
 
                 {transcriptMode === "mine" && cap.missingTranslation ? (
-                  <p className="mt-2 text-xs text-amber-300/90" role="status">
-                    No translated caption for {viewerLabel} yet—showing the original line
-                    above.
+                  <p className="mt-1.5 text-[11px] text-amber-300/90" role="status">
+                    No caption for {viewerLabel} yet—showing original above.
                   </p>
                 ) : null}
 
                 {transcriptMode === "original" && line.translations[viewerTargetLang] ? (
-                  <div className="mt-3 rounded-lg border border-slate-700/40 bg-slate-900/40 px-3 py-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                      Also available in {viewerLabel}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-300">
+                  <details className="group mt-2 rounded-md border border-slate-700/40 bg-slate-900/35">
+                    <summary className="cursor-pointer list-none px-2 py-1.5 text-[10px] font-medium text-slate-400 marker:hidden [&::-webkit-details-marker]:hidden">
+                      <span className="inline-flex items-center gap-1">
+                        <span className="text-slate-500 transition-transform group-open:rotate-90">
+                          ▸
+                        </span>
+                        {viewerLabel}
+                      </span>
+                    </summary>
+                    <p className="border-t border-slate-700/30 px-2 pb-2 pt-1 text-xs leading-snug text-slate-300">
                       {line.translations[viewerTargetLang]}
                     </p>
-                  </div>
+                  </details>
                 ) : null}
               </article>
             );

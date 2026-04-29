@@ -29,8 +29,21 @@ export const LANGUAGE_OPTIONS = {
   { readonly native: string; readonly english: string }
 >;
 
-/** ~0.75s of mono PCM at 48kHz — balance latency vs Whisper stability. */
-export const PCM_BATCH_SAMPLES = 36_000;
+/**
+ * Target window of mono PCM before an early flush (seconds × actual sample rate).
+ * Was previously a fixed sample count tuned for 48 kHz while capture runs at 16 kHz.
+ */
+export const PCM_FLUSH_TARGET_SEC = 0.5;
+
+export const PCM_FLUSH_MIN_SAMPLES = 4_000;
+
+export const PCM_FLUSH_MAX_SAMPLES = 16_000;
+
+/**
+ * Periodic flush while capturing. Worker allows ~4 audio POSTs/sec per participant
+ * (see apps/worker AUDIO_RATE_MAX_PER_WINDOW); 480ms ≈ 2.1/sec average.
+ */
+export const PCM_PERIODIC_FLUSH_MS = 480;
 
 export const MAX_WEBSOCKET_RECONNECTS = 5;
 
