@@ -409,6 +409,13 @@ app.post("/api/rooms/:roomId/audio", async (c) => {
           const t = typeof text === "string" ? text.trim() : "";
           if (t.length > 0) translations[lang] = t;
         }
+        // Ensure every listener language in the room has a caption string when it
+        // matches the spoken language (passthrough); avoids empty maps on the wire.
+        for (const lang of targetLanguages) {
+          if (!translations[lang] && lang === result.sourceLang) {
+            translations[lang] = safeText;
+          }
+        }
         transcriptSegment = {
           ts: body.timestampMs,
           sourceText: safeText,

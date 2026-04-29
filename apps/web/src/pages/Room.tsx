@@ -26,6 +26,7 @@ import {
 import { endRoom, joinRoom } from "../lib/api";
 import { logger } from "../lib/logger";
 import { loadRoomProfile, saveRoomProfile, type RoomJoinProfile } from "../lib/roomProfile";
+import { parseTranscriptSegmentTranslations } from "../lib/transcriptWire";
 
 /** Invite URL: opening it uses saved profile on this device or shows a short join form. */
 function joinUrlForRoom(roomId: string): string {
@@ -127,7 +128,7 @@ export function Room(): JSX.Element {
           participantId: msg.participantId,
           sourceText: msg.sourceText,
           sourceLang: msg.sourceLang,
-          translations: msg.translations,
+          translations: parseTranscriptSegmentTranslations(msg.translations),
           ts: msg.ts,
         });
         markSpeaking(msg.participantId);
@@ -506,7 +507,60 @@ export function Room(): JSX.Element {
           </p>
         ) : null}
 
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(280px,380px)] lg:items-start">
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,1.15fr)_minmax(300px,1fr)] lg:items-start">
+          <section className="flex min-h-0 min-w-0 flex-col gap-3 lg:sticky lg:top-28">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">
+                  Transcript
+                </h2>
+                <p className="mt-1 max-w-md text-xs text-slate-500">
+                  Read along in your &quot;hear&quot; language or switch to the raw
+                  transcript. Cards match the room pipeline (same timing as TTS).
+                </p>
+              </div>
+              <div
+                className="flex shrink-0 gap-0.5 rounded-xl border border-slate-600/80 bg-slate-900/80 p-1 shadow-inner"
+                role="tablist"
+                aria-label="Transcript display mode"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={transcriptMode === "mine"}
+                  className={`rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
+                    transcriptMode === "mine"
+                      ? "bg-sky-600 text-white shadow"
+                      : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                  }`}
+                  onClick={() => setTranscriptMode("mine")}
+                >
+                  My language
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={transcriptMode === "original"}
+                  className={`rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
+                    transcriptMode === "original"
+                      ? "bg-sky-600 text-white shadow"
+                      : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                  }`}
+                  onClick={() => setTranscriptMode("original")}
+                >
+                  Original
+                </button>
+              </div>
+            </div>
+            <TranscriptPanel
+              lines={lines}
+              participantNames={participantNames}
+              viewerTargetLang={myTargetLang}
+              transcriptMode={transcriptMode}
+              className="min-h-[320px] max-h-[min(62vh,calc(100vh-12rem))] lg:max-h-[calc(100vh-8rem)]"
+            />
+          </section>
+
           <div className="flex min-w-0 flex-col gap-6">
             <section className="space-y-3">
               <h2 className="text-sm font-medium uppercase tracking-wide text-room-muted">
@@ -598,45 +652,6 @@ export function Room(): JSX.Element {
               <AudioVisualizer stream={mediaStream} />
             </section>
           </div>
-
-          <section className="flex min-h-0 flex-col gap-3 lg:sticky lg:top-28">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-sm font-medium uppercase tracking-wide text-room-muted">
-                Transcript
-              </h2>
-              <div className="flex gap-1 rounded-lg border border-slate-700 p-0.5 text-xs">
-                <button
-                  type="button"
-                  className={`rounded-md px-2 py-1 ${
-                    transcriptMode === "mine"
-                      ? "bg-slate-700 text-white"
-                      : "text-room-muted hover:text-slate-200"
-                  }`}
-                  onClick={() => setTranscriptMode("mine")}
-                >
-                  My language
-                </button>
-                <button
-                  type="button"
-                  className={`rounded-md px-2 py-1 ${
-                    transcriptMode === "original"
-                      ? "bg-slate-700 text-white"
-                      : "text-room-muted hover:text-slate-200"
-                  }`}
-                  onClick={() => setTranscriptMode("original")}
-                >
-                  Original
-                </button>
-              </div>
-            </div>
-            <TranscriptPanel
-              lines={lines}
-              participantNames={participantNames}
-              viewerTargetLang={myTargetLang}
-              transcriptMode={transcriptMode}
-              className="min-h-[280px] max-h-[min(560px,calc(100vh-14rem))] lg:max-h-[calc(100vh-10rem)]"
-            />
-          </section>
         </div>
       </div>
     </div>
