@@ -25,21 +25,18 @@ export class RoomDO extends DurableObject<Env> {
     super(ctx, env);
     this.sql = ctx.storage.sql;
     this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS message_buffer (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        participant_id TEXT NOT NULL,
-        type TEXT NOT NULL,
-        payload TEXT NOT NULL,
-        created_at INTEGER NOT NULL
-      )
-    `);
-    this.sql.exec(`
       CREATE TABLE IF NOT EXISTS do_participants (
         participant_id TEXT PRIMARY KEY,
         display_name TEXT NOT NULL,
         source_lang TEXT NOT NULL,
         target_lang TEXT NOT NULL,
         joined_at INTEGER NOT NULL
+      )
+    `);
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS room_meta (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        created_at INTEGER NOT NULL
       )
     `);
     this.sql.exec(`
@@ -76,8 +73,6 @@ export class RoomDO extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
-    this.restoreParticipantsFromStorage();
-
     if (request.headers.get("Upgrade") === "websocket") {
       return this.handleWebSocket(request);
     }
@@ -88,6 +83,9 @@ export class RoomDO extends DurableObject<Env> {
     }
     if (url.pathname === "/internal/broadcast-transcript") {
       return this.handleBroadcastTranscript(request);
+    }
+    if (url.pathname === "/internal/room-ended") {
+      return this.handleRoomEnded(request);
     }
     if (url.pathname === "/internal/rate-limit-audio") {
       return this.handleRateLimitAudio(request);
@@ -124,6 +122,19 @@ export class RoomDO extends DurableObject<Env> {
       ts: body.ts ?? Date.now(),
     });
 
+    return Response.json({ ok: true });
+  }
+
+  private async handleRoomEnded(request: Request): Promise<Response> {
+    void request;
+    this.broadcast({ type: "room_ended" });
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.close(4001, "Room ended");
+      } catch {
+        /* ignore */
+      }
+    }
     return Response.json({ ok: true });
   }
 
@@ -175,10 +186,21 @@ export class RoomDO extends DurableObject<Env> {
     const displayName = url.searchParams.get("displayName");
     const sourceLang = url.searchParams.get("sourceLang") as Language | null;
     const targetLang = url.searchParams.get("targetLang") as Language | null;
+    const roomCreatedAtRaw = url.searchParams.get("roomCreatedAt");
+    const roomCreatedAt = Number(roomCreatedAtRaw);
+    const createdAtMs =
+      Number.isFinite(roomCreatedAt) && roomCreatedAt > 0
+        ? Math.floor(roomCreatedAt)
+        : Date.now();
 
     if (!participantId || !displayName || !sourceLang || !targetLang) {
       return new Response("Missing params", { status: 400 });
     }
+
+    this.sql.exec(
+      `INSERT OR IGNORE INTO room_meta (singleton, created_at) VALUES (1, ?)`,
+      createdAtMs,
+    );
 
     const [client, server] = Object.values(new WebSocketPair()) as [
       WebSocket,
@@ -279,6 +301,7 @@ export class RoomDO extends DurableObject<Env> {
     } catch {
       /* ignore */
     }
+    this.broadcast({ type: "participant_left", participantId });
   }
 
   private async handlePipelineResult(request: Request): Promise<Response> {
@@ -294,23 +317,27 @@ export class RoomDO extends DurableObject<Env> {
 
     const { participantId, pipelineResult } = parsed;
 
+    const sockets = this.ctx.getWebSockets();
+    const wsByParticipant = new Map<string, WebSocket>();
+    for (const ws of sockets) {
+      const tags = this.ctx.getTags(ws);
+      const pid = tags[0];
+      if (pid) wsByParticipant.set(pid, ws);
+    }
+
     for (const [pid, participant] of this.participants) {
       if (pid === participantId) continue;
       const targetLang = participant.targetLang;
       const audioB64 = pipelineResult.audioTracks[targetLang];
       if (!audioB64) continue;
-
-      const sockets = this.ctx.getWebSockets();
-      for (const ws of sockets) {
-        const tags = this.ctx.getTags(ws);
-        if (tags[0] !== pid) continue;
-        this.sendToWebSocket(ws, {
-          type: "translated_audio",
-          targetParticipantId: pid,
-          audioB64,
-          lang: targetLang,
-        });
-      }
+      const ws = wsByParticipant.get(pid);
+      if (!ws) continue;
+      this.sendToWebSocket(ws, {
+        type: "translated_audio",
+        targetParticipantId: pid,
+        audioB64,
+        lang: targetLang,
+      });
     }
 
     return new Response(JSON.stringify({ ok: true }), {
@@ -339,6 +366,17 @@ export class RoomDO extends DurableObject<Env> {
     }
   }
 
+  private getRoomCreatedAtMs(): number {
+    for (const row of this.sql.exec(
+      "SELECT created_at FROM room_meta WHERE singleton = 1",
+    )) {
+      const r = row as unknown as { created_at: number };
+      const v = Number(r.created_at);
+      if (Number.isFinite(v) && v > 0) return v;
+    }
+    return Date.now();
+  }
+
   private getRoomState(request: Request): RoomState {
     const durableName = this.ctx.id.name;
     const roomId =
@@ -347,7 +385,7 @@ export class RoomDO extends DurableObject<Env> {
     return {
       roomId,
       participants: Object.fromEntries(this.participants),
-      createdAt: Date.now(),
+      createdAt: this.getRoomCreatedAtMs(),
       isActive: true,
     };
   }

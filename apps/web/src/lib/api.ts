@@ -20,6 +20,7 @@ export async function createRoom(): Promise<CreateRoomResponse> {
 export interface JoinRoomResponse {
   participantId: string;
   wsUrl: string;
+  createdAt: number;
 }
 
 export async function joinRoom(

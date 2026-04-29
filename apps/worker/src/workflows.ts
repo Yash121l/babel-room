@@ -1,5 +1,6 @@
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 import { WorkflowEntrypoint } from "cloudflare:workers";
+import { LLAMA_MODEL } from "./constants";
 
 interface TranscriptSegmentRow {
   id: string;
@@ -37,7 +38,7 @@ export class PostCallSummaryWorkflow extends WorkflowEntrypoint<
         )
         .join("\n");
 
-      const result = (await this.env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+      const result = (await this.env.AI.run(LLAMA_MODEL, {
         prompt: `Summarize this multilingual conference call transcript in English.
 Include: main topics, decisions made, action items.
 Transcript:\n${fullTranscript}`,
@@ -60,12 +61,6 @@ Transcript:\n${fullTranscript}`,
           httpMetadata: { contentType: "application/json" },
         },
       );
-    });
-
-    await step.do("update-room", async () => {
-      await this.env.DB.prepare("UPDATE rooms SET ended_at = ? WHERE id = ?")
-        .bind(Date.now(), roomId)
-        .run();
     });
 
     return { roomId, summary, segmentCount: segments.length };

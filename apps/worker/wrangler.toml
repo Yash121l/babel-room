@@ -6,6 +6,10 @@ main = "src/index.ts"
 compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 
+[vars]
+# Comma-separated origins, or empty / "*" for any origin (dev). Production: https://your-worker.workers.dev
+ALLOWED_ORIGINS = "babel-room-worker.yashlunawat-tech.workers.dev"
+
 [observability]
 enabled = true
 

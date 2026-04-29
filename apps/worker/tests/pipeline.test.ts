@@ -84,6 +84,29 @@ describe("runAudioPipeline", () => {
     expect(whisperArgs.initial_prompt).toContain("Yash");
   });
 
+  it("skips translate and TTS when all target languages match source", async () => {
+    const run = vi.fn().mockResolvedValueOnce({
+      text: "hello",
+      detected_language: "en",
+    });
+    const env = makeEnv({ run } as unknown as Ai);
+    const chunk: AudioChunk = {
+      participantId: "p",
+      roomId: "abcd1234",
+      pcmBase64: makeTonePcmBase64(16_000),
+      sampleRateHz: 16_000,
+      sequenceNum: 4,
+      timestampMs: Date.now(),
+    };
+    const result = await runAudioPipeline(chunk, env, {
+      targetLanguages: ["en"],
+      spokenLanguageHint: "en",
+    });
+    expect(result.transcript).toBe("hello");
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(result.translations).toEqual({});
+  });
+
   it("does not call Whisper for near-silence PCM", async () => {
     const run = vi.fn();
     const env = makeEnv({ run } as unknown as Ai);

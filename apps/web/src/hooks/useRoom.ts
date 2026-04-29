@@ -37,6 +37,7 @@ export function useRoom(
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectsRef = useRef(0);
   const timerRef = useRef<number | null>(null);
+  const roomEndedRef = useRef(false);
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
 
@@ -50,12 +51,16 @@ export function useRoom(
         ...p,
         [msg.participant.id]: msg.participant,
       }));
-    } else if (msg.type === "participant_left") {
+    } else     if (msg.type === "participant_left") {
       setParticipants((p) => {
         const next = { ...p };
         delete next[msg.participantId];
         return next;
       });
+    } else if (msg.type === "room_ended") {
+      roomEndedRef.current = true;
+      setRoomActive(false);
+      setLastError("This room has ended");
     } else if (msg.type === "error") {
       setLastError(msg.message);
     }
@@ -114,9 +119,15 @@ export function useRoom(
         setLastError("WebSocket error");
         logger.error("ws_error", {});
       };
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
         if (cancelled) return;
-        logger.info("ws_close", { reconnects: reconnectsRef.current });
+        logger.info("ws_close", {
+          reconnects: reconnectsRef.current,
+          code: ev.code,
+        });
+        if (ev.code === 4001 || roomEndedRef.current) {
+          return;
+        }
         if (reconnectsRef.current >= MAX_WEBSOCKET_RECONNECTS) {
           setLastError("WebSocket reconnect limit reached");
           return;
@@ -131,6 +142,7 @@ export function useRoom(
     };
 
     reconnectsRef.current = 0;
+    roomEndedRef.current = false;
     openSocket();
 
     return () => {

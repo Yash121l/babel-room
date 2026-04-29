@@ -5,6 +5,7 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
       return true;
     }
     const ch0 = input[0];
+    if (!ch0) return true;
     const copy = new Float32Array(ch0.length);
     copy.set(ch0);
     this.port.postMessage(copy, [copy.buffer]);

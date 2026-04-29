@@ -160,7 +160,19 @@ export async function runAudioPipeline(
       );
     }
 
-    const uniqueTargets = [...new Set(options.targetLanguages)];
+    const uniqueTargets = [...new Set(options.targetLanguages)].filter(
+      (t) => t !== sourceLang,
+    );
+
+    if (uniqueTargets.length === 0) {
+      return {
+        transcript,
+        sourceLang,
+        translations: {} as Record<Language, string>,
+        audioTracks: {} as Record<Language, string>,
+        durationMs: Date.now() - pipelineStart,
+      };
+    }
 
     const perLang = await Promise.all(
       uniqueTargets.map(async (targetLang) => {
@@ -169,7 +181,7 @@ export async function runAudioPipeline(
           const tr = (await env.AI.run(LLAMA_MODEL, {
             prompt: `Translate this ${sourceLang} text to ${targetLang}.
 Output ONLY the translation, no explanation.
-Text: "${transcript.replace(/"/g, '\\"')}"`,
+<text>${transcript}</text>`,
             max_tokens: 500,
           })) as { response?: string };
           translated = (tr.response ?? "").trim();

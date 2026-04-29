@@ -89,7 +89,11 @@ export function useWebRTC(options: {
     } catch {
       logger.warn("audio_post_retry", { backoffMs: backoffRef.current });
       await new Promise((r) => setTimeout(r, backoffRef.current));
-      backoffRef.current = Math.min(10_000, backoffRef.current * 2);
+      const jitter = 1 + Math.random() * 0.3;
+      backoffRef.current = Math.min(
+        10_000,
+        Math.round(backoffRef.current * 2 * jitter),
+      );
     }
   }, [participantId, roomId]);
 

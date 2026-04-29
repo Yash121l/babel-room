@@ -90,9 +90,16 @@ export function Room(): JSX.Element {
     [addLine, markSpeaking],
   );
 
-  const { participants, lastError } = useRoom(wsUrl, {
+  const { participants, lastError, sendPing } = useRoom(wsUrl, {
     onMessage: onWsMessage,
   });
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      sendPing();
+    }, 30_000);
+    return () => window.clearInterval(id);
+  }, [sendPing]);
 
   const onBatchUploaded = useCallback(() => {
     if (participantId) markSpeaking(participantId);

@@ -63,6 +63,10 @@ npm run deploy
 
 This builds `apps/web` into `apps/web/dist`, then deploys the Worker in `apps/worker` (API + static assets + DO / D1 / R2 / Workflows bindings per `wrangler.toml`).
 
+**CORS:** `[vars] ALLOWED_ORIGINS` in `wrangler.toml` / `wrangler.test.toml` controls API access. Leave empty or set to `*` (via dashboard override) for permissive dev. In production, set a comma-separated allowlist, e.g. `https://babel-room-worker.your-account.workers.dev`.
+
+**D1:** Migration `0002_drop_rooms_languages_used.sql` removes an unused column; apply remote/local migrations after upgrading the repo.
+
 ## CI/CD (GitHub Actions)
 
 | Workflow | When it runs |

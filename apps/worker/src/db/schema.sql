@@ -2,8 +2,7 @@ CREATE TABLE IF NOT EXISTS rooms (
   id TEXT PRIMARY KEY,
   created_at INTEGER NOT NULL,
   ended_at INTEGER,
-  participant_count INTEGER DEFAULT 0,
-  languages_used TEXT NOT NULL DEFAULT '[]'
+  participant_count INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS participants (

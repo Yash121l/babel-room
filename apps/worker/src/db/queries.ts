@@ -6,7 +6,6 @@ export interface RoomRow {
   created_at: number;
   ended_at: number | null;
   participant_count: number;
-  languages_used: string;
 }
 
 export async function insertRoom(
@@ -15,9 +14,7 @@ export async function insertRoom(
   createdAt: number,
 ): Promise<void> {
   await db
-    .prepare(
-      `INSERT INTO rooms (id, created_at, languages_used) VALUES (?, ?, '[]')`,
-    )
+    .prepare(`INSERT INTO rooms (id, created_at) VALUES (?, ?)`)
     .bind(id, createdAt)
     .run();
 }
@@ -55,27 +52,26 @@ export async function insertParticipant(
     joinedAt: number;
   },
 ): Promise<void> {
-  await db
-    .prepare(
-      `INSERT INTO participants (id, room_id, display_name, source_language, target_language, joined_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    )
-    .bind(
-      args.id,
-      args.roomId,
-      args.displayName,
-      args.sourceLang,
-      args.targetLang,
-      args.joinedAt,
-    )
-    .run();
-
-  await db
-    .prepare(
-      `UPDATE rooms SET participant_count = participant_count + 1 WHERE id = ?`,
-    )
-    .bind(args.roomId)
-    .run();
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO participants (id, room_id, display_name, source_language, target_language, joined_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        args.id,
+        args.roomId,
+        args.displayName,
+        args.sourceLang,
+        args.targetLang,
+        args.joinedAt,
+      ),
+    db
+      .prepare(
+        `UPDATE rooms SET participant_count = participant_count + 1 WHERE id = ?`,
+      )
+      .bind(args.roomId),
+  ]);
 }
 
 export interface ParticipantTranscriptionHints {
@@ -166,15 +162,14 @@ export async function markParticipantLeft(
     .first<{ room_id: string }>();
   if (!row) return;
 
-  await db
-    .prepare(`UPDATE participants SET left_at = ? WHERE id = ?`)
-    .bind(leftAt, participantId)
-    .run();
-
-  await db
-    .prepare(
-      `UPDATE rooms SET participant_count = CASE WHEN participant_count > 0 THEN participant_count - 1 ELSE 0 END WHERE id = ?`,
-    )
-    .bind(row.room_id)
-    .run();
+  await db.batch([
+    db
+      .prepare(`UPDATE participants SET left_at = ? WHERE id = ?`)
+      .bind(leftAt, participantId),
+    db
+      .prepare(
+        `UPDATE rooms SET participant_count = CASE WHEN participant_count > 0 THEN participant_count - 1 ELSE 0 END WHERE id = ?`,
+      )
+      .bind(row.room_id),
+  ]);
 }

@@ -1,5 +1,10 @@
 import type { Context, Next } from "hono";
-export type AppEnv = { Bindings: Env; Variables: { requestId: string; startedAt: number } };
+import { resolveCorsAllowOrigin } from "./cors";
+
+export type AppEnv = {
+  Bindings: Env;
+  Variables: { requestId: string; startedAt: number; corsAllowOrigin: string };
+};
 
 export async function requestContextMiddleware(
   c: Context<AppEnv>,
@@ -9,6 +14,13 @@ export async function requestContextMiddleware(
   const startedAt = Date.now();
   c.set("requestId", requestId);
   c.set("startedAt", startedAt);
+  c.set(
+    "corsAllowOrigin",
+    resolveCorsAllowOrigin(
+      c.env.ALLOWED_ORIGINS,
+      c.req.header("Origin") ?? null,
+    ),
+  );
   await next();
   const durationMs = Date.now() - startedAt;
   console.log(
@@ -25,14 +37,19 @@ export async function requestContextMiddleware(
 }
 
 export function structuredError(
-  requestId: string,
+  c: Context<AppEnv>,
   code: string,
   message: string,
   status: number,
 ): Response {
-  const headers = corsHeaders({
+  const requestId = c.get("requestId");
+  const origin = c.get("corsAllowOrigin");
+  const headers = new Headers({
     "Content-Type": "application/json",
     "X-Request-Id": requestId,
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type,Authorization",
   });
   return Response.json(
     { error: { code, message, requestId } },
@@ -41,12 +58,4 @@ export function structuredError(
       headers,
     },
   );
-}
-
-export function corsHeaders(extra?: HeadersInit): Headers {
-  const h = new Headers(extra);
-  h.set("Access-Control-Allow-Origin", "*");
-  h.set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
-  h.set("Access-Control-Allow-Headers", "Content-Type,Authorization");
-  return h;
 }

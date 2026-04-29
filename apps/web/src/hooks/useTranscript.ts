@@ -18,10 +18,14 @@ export function useTranscript(): {
 
   const addLine = useCallback((line: Omit<TranscriptLine, "id">) => {
     if (!line.text.trim()) return;
-    setLines((prev) => [
-      ...prev,
-      { ...line, id: `${line.ts}-${line.participantId}-${prev.length}` },
-    ]);
+    setLines((prev) => {
+      const next = [
+        ...prev,
+        { ...line, id: crypto.randomUUID() },
+      ];
+      const cap = 200;
+      return next.length > cap ? next.slice(-cap) : next;
+    });
   }, []);
 
   const clear = useCallback(() => {

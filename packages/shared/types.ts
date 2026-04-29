@@ -43,6 +43,7 @@ export type WSMessageType =
       lang: Language;
     }
   | { type: "room_state"; state: RoomState }
+  | { type: "room_ended" }
   | { type: "error"; code: string; message: string }
   | { type: "ping" }
   | { type: "pong" };
