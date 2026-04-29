@@ -25,35 +25,271 @@ import {
 } from "../hooks";
 import { endRoom, fetchWebRtcIceConfig, joinRoom } from "../lib/api";
 import { logger } from "../lib/logger";
-import { loadRoomProfile, saveRoomProfile, type RoomJoinProfile } from "../lib/roomProfile";
+import {
+  loadRoomProfile,
+  saveRoomProfile,
+  type RoomJoinProfile,
+} from "../lib/roomProfile";
 import { parseTranscriptSegmentTranslations } from "../lib/transcriptWire";
 import { parseViteWebRtcIceServers } from "../lib/webrtcIce";
 
-/** Invite URL: opening it uses saved profile on this device or shows a short join form. */
 function joinUrlForRoom(roomId: string): string {
   const path = `/room/${roomId}`;
   if (typeof window === "undefined") return path;
   return `${window.location.origin}${path}`;
 }
 
-type LocationState = {
-  displayName?: string;
-  sourceLang?: Language;
-  targetLang?: Language;
-};
+type LocationState = { displayName?: string; sourceLang?: Language; targetLang?: Language };
 
 function profileFromLocationState(state: unknown): RoomJoinProfile | null {
   if (!state || typeof state !== "object") return null;
   const s = state as LocationState;
   const dn = typeof s.displayName === "string" ? s.displayName.trim() : "";
   if (!dn || !s.sourceLang || !s.targetLang) return null;
-  return {
-    displayName: dn,
-    sourceLang: s.sourceLang,
-    targetLang: s.targetLang,
-  };
+  return { displayName: dn, sourceLang: s.sourceLang, targetLang: s.targetLang };
 }
 
+/* ── Shared UI primitives ─────────────────────────────────────── */
+function HardBtn(props: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  variant?: "outline" | "accent" | "danger";
+  style?: React.CSSProperties;
+  className?: string;
+}) {
+  const { children, onClick, disabled, variant = "outline", style, className } = props;
+  const [down, setDown] = useState(false);
+
+  const base: React.CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    fontFamily: "var(--sans)",
+    fontSize: 11,
+    fontWeight: 600,
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
+    padding: "6px 14px",
+    border: "1px solid var(--ink)",
+    cursor: disabled ? "not-allowed" : "pointer",
+    borderRadius: 2,
+    userSelect: "none",
+    opacity: disabled ? 0.45 : 1,
+    transform: down ? "translate(2px,2px)" : "none",
+    transition: "transform 0.08s, box-shadow 0.08s",
+  };
+
+  const variants: Record<string, React.CSSProperties> = {
+    outline: {
+      background: "transparent",
+      color: "var(--ink)",
+      boxShadow: down ? "none" : "2px 2px 0 var(--ink)",
+    },
+    accent: {
+      background: "var(--accent)",
+      color: "var(--paper)",
+      border: "1px solid var(--accent)",
+      boxShadow: down ? "none" : "2px 2px 0 rgba(0,0,0,0.2)",
+    },
+    danger: {
+      background: "transparent",
+      color: "#C0392B",
+      border: "1px solid #C0392B",
+      boxShadow: down ? "none" : "2px 2px 0 #C0392B",
+    },
+  };
+
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={disabled ? undefined : onClick}
+      onMouseDown={() => setDown(true)}
+      onMouseUp={() => setDown(false)}
+      onMouseLeave={() => setDown(false)}
+      className={className}
+      style={{ ...base, ...variants[variant], ...style }}
+    >
+      {children}
+    </button>
+  );
+}
+
+/* ── Volume slider ────────────────────────────────────────────── */
+function VolumeSlider(props: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  color: string;
+  disabled?: boolean;
+}) {
+  const { label, value, onChange, color, disabled } = props;
+  const pct = Math.round(value * 100);
+  return (
+    <div className={disabled ? "opacity-40" : ""}>
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-light">
+          {label}
+        </span>
+        <span className="font-mono text-[11px] text-ink-light">{pct}%</span>
+      </div>
+      <div
+        className="relative cursor-pointer"
+        style={{
+          height: 3,
+          background: "var(--warm-white)",
+          border: "1px solid var(--rule)",
+          borderRadius: 1,
+        }}
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          onChange(Math.round(((e.clientX - r.left) / r.width) * 100) / 100);
+        }}
+      >
+        <div style={{ height: "100%", width: `${pct}%`, background: color, borderRadius: 1 }} />
+        <div
+          style={{
+            position: "absolute",
+            top: "50%",
+            left: `${pct}%`,
+            transform: "translate(-50%,-50%)",
+            width: 11,
+            height: 11,
+            background: color,
+            border: "2px solid var(--paper)",
+            borderRadius: 1,
+            boxShadow: "1px 1px 0 var(--ink)",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/* ── Toggle switch ────────────────────────────────────────────── */
+function Toggle(props: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+  const { checked, onChange, label } = props;
+  return (
+    <label className="flex cursor-pointer items-center gap-2">
+      <div
+        onClick={() => onChange(!checked)}
+        style={{
+          width: 28,
+          height: 16,
+          border: "1px solid var(--ink)",
+          borderRadius: 1,
+          position: "relative",
+          background: checked ? "var(--ink)" : "transparent",
+          cursor: "pointer",
+          flexShrink: 0,
+          transition: "background 0.15s",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            top: 2,
+            left: checked ? 13 : 2,
+            width: 10,
+            height: 10,
+            background: checked ? "var(--paper)" : "var(--ink)",
+            borderRadius: 1,
+            transition: "left 0.15s",
+          }}
+        />
+      </div>
+      <span className="text-[11px] leading-snug text-ink-light">{label}</span>
+    </label>
+  );
+}
+
+/* ── JOIN FORM ────────────────────────────────────────────────── */
+function JoinForm(props: {
+  roomId: string;
+  name: string;
+  sourceLang: Language;
+  targetLang: Language;
+  isJoining: boolean;
+  error: string | null;
+  onChangeName: (v: string) => void;
+  onChangeSource: (v: Language) => void;
+  onChangeTarget: (v: Language) => void;
+  onSubmit: () => void;
+}) {
+  const { roomId, name, sourceLang, targetLang, isJoining, error,
+    onChangeName, onChangeSource, onChangeTarget, onSubmit } = props;
+
+  return (
+    <div className="flex h-screen flex-col items-center justify-center bg-paper px-4">
+      <div
+        className="w-full max-w-md bg-paper p-10"
+        style={{
+          border: "1px solid var(--ink)",
+          boxShadow: "4px 4px 0 var(--ink)",
+          borderRadius: 2,
+          animation: "fadeUp 0.4s ease",
+        }}
+      >
+        <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-light">
+          Room {roomId}
+        </p>
+        <div style={{ height: 1, background: "var(--ink)", marginBottom: 24 }} />
+        <h1 className="mb-1 font-serif text-2xl text-ink">Join room</h1>
+        <p className="mb-6 text-sm leading-relaxed text-ink-light">
+          Choose the language you speak and the language you want to hear from others.
+        </p>
+
+        <div className="mb-4">
+          <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-light">
+            Name
+          </label>
+          <input
+            value={name}
+            onChange={(e) => onChangeName(e.target.value)}
+            disabled={isJoining}
+            autoComplete="nickname"
+            className="w-full bg-paper px-3 py-2.5 text-sm text-ink outline-none"
+            style={{ border: "1px solid var(--rule)", borderRadius: 2 }}
+            onFocus={(e) => { e.currentTarget.style.border = "1px solid var(--ink)"; e.currentTarget.style.boxShadow = "2px 2px 0 var(--ink)"; }}
+            onBlur={(e) => { e.currentTarget.style.border = "1px solid var(--rule)"; e.currentTarget.style.boxShadow = "none"; }}
+          />
+        </div>
+
+        <div className="mb-6" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <LanguageSelector id="js-src" label="You speak" value={sourceLang} onChange={onChangeSource} disabled={isJoining} />
+          <LanguageSelector id="js-tgt" label="You hear" value={targetLang} onChange={onChangeTarget} disabled={isJoining} />
+        </div>
+
+        {error && (
+          <div className="mb-4 px-3 py-2 text-[13px]" style={{ border: "1px solid #C0392B", borderLeft: "3px solid #C0392B", color: "#C0392B", borderRadius: 2 }}>
+            {error}
+          </div>
+        )}
+
+        <button
+          type="button"
+          disabled={isJoining}
+          onClick={onSubmit}
+          className="flex w-full cursor-pointer items-center justify-center gap-2 py-3 text-[13px] font-semibold uppercase tracking-[0.08em] text-paper disabled:opacity-50"
+          style={{ background: "var(--terracotta)", border: "1px solid var(--terracotta)", borderRadius: 2, boxShadow: "2px 2px 0 rgba(0,0,0,0.2)" }}
+        >
+          {isJoining ? "Joining…" : "Join room →"}
+        </button>
+
+        <Link
+          to="/"
+          className="mt-4 block text-center text-[11px] text-ink-faint underline-offset-2 hover:text-ink hover:underline"
+        >
+          Back to home
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+/* ── ROOM ─────────────────────────────────────────────────────── */
 export function Room(): JSX.Element {
   const { roomId: roomIdParam } = useParams();
   const navigate = useNavigate();
@@ -78,15 +314,12 @@ export function Room(): JSX.Element {
   const [isRoomHost, setIsRoomHost] = useState(false);
   const [webrtcReset, setWebrtcReset] = useState(0);
   const [transcriptMode, setTranscriptMode] = useState<"mine" | "original">("mine");
-  /** What you want to hear: both live + AI, live people only, or AI translation only. */
   const [listeningMode, setListeningMode] = useState<"both" | "peer" | "ai">("both");
   const [translationTtsVolume, setTranslationTtsVolume] = useState(1);
   const [peerVoiceVolume, setPeerVoiceVolume] = useState(1);
   const [duckRemoteWhileTts, setDuckRemoteWhileTts] = useState(true);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
-  const [iceServers, setIceServers] = useState<RTCIceServer[]>(() =>
-    parseViteWebRtcIceServers(),
-  );
+  const [iceServers, setIceServers] = useState<RTCIceServer[]>(() => parseViteWebRtcIceServers());
   const speakingTimers = useRef<Map<string, number>>(new Map());
   const joinKeyRef = useRef(0);
 
@@ -96,17 +329,9 @@ export function Room(): JSX.Element {
   useEffect(() => {
     let alive = true;
     void fetchWebRtcIceConfig()
-      .then((r) => {
-        if (!alive || !r.iceServers?.length) return;
-        setIceServers(r.iceServers);
-      })
-      .catch(() => {
-        if (!alive) return;
-        setIceServers(parseViteWebRtcIceServers());
-      });
-    return () => {
-      alive = false;
-    };
+      .then((r) => { if (!alive || !r.iceServers?.length) return; setIceServers(r.iceServers); })
+      .catch(() => { if (!alive) return; setIceServers(parseViteWebRtcIceServers()); });
+    return () => { alive = false; };
   }, []);
 
   const {
@@ -133,11 +358,7 @@ export function Room(): JSX.Element {
     const existing = speakingTimers.current.get(id);
     if (existing !== undefined) window.clearTimeout(existing);
     const t = window.setTimeout(() => {
-      setSpeakingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
+      setSpeakingIds((prev) => { const next = new Set(prev); next.delete(id); return next; });
       speakingTimers.current.delete(id);
     }, 1200);
     speakingTimers.current.set(id, t);
@@ -159,26 +380,23 @@ export function Room(): JSX.Element {
         markSpeaking(msg.participantId);
       }
       if (msg.type === "translated_audio") {
-        if (participantId && msg.targetParticipantId !== participantId) {
-          return;
-        }
+        if (participantId && msg.targetParticipantId !== participantId) return;
         if (!translationTtsEnabled) return;
         enqueueTranslationAudio(msg.audioB64);
       }
     },
-    [
-      addLine,
-      enqueueTranslationAudio,
-      markSpeaking,
-      participantId,
-      translationTtsEnabled,
-    ],
+    [addLine, enqueueTranslationAudio, markSpeaking, participantId, translationTtsEnabled],
   );
 
   const { participants, roomActive, lastError, sendPing, sendRoomMessage } =
-    useRoom(wsUrl, {
-      onMessage: onWsMessage,
-    });
+    useRoom(wsUrl, { onMessage: onWsMessage });
+
+  const hostParticipantId = useMemo((): string | null => {
+    const list = Object.values(participants);
+    if (list.length === 0) return null;
+    const sorted = [...list].sort((a, b) => a.joinedAt - b.joinedAt);
+    return sorted[0]?.id ?? null;
+  }, [participants]);
 
   const peerId = useMemo(() => {
     const ids = Object.keys(participants);
@@ -187,9 +405,7 @@ export function Room(): JSX.Element {
   }, [participants, participantId]);
 
   const myTargetLang = useMemo((): Language => {
-    if (participantId && participants[participantId]) {
-      return participants[participantId].targetLang;
-    }
+    if (participantId && participants[participantId]) return participants[participantId].targetLang;
     return resolvedProfile?.targetLang ?? "en";
   }, [participantId, participants, resolvedProfile]);
 
@@ -197,9 +413,7 @@ export function Room(): JSX.Element {
     if (participantId) markSpeaking(participantId);
   }, [markSpeaking, participantId]);
 
-  const captureEnabled = Boolean(
-    wsUrl && participantId && micSessionActive && roomActive,
-  );
+  const captureEnabled = Boolean(wsUrl && participantId && micSessionActive && roomActive);
 
   const { isCapturing, error: micError, mediaStream } = useWebRTC({
     roomId,
@@ -209,19 +423,13 @@ export function Room(): JSX.Element {
     onBatchUploaded,
   });
 
-  const {
-    handleSignalingMessage: handlePeerWebrtcMessage,
-    peerConnectionState,
-    iceConnectionState,
-    resumeRemoteAudio,
-  } = useRoomPeerAudio({
+  const { handleSignalingMessage: handlePeerWebrtcMessage, peerConnectionState,
+    iceConnectionState, resumeRemoteAudio } = useRoomPeerAudio({
     selfId: participantId ?? "",
     peerId,
     mediaStream,
     sendRoomMessage,
-    enabled: Boolean(
-      roomActive && participantId && peerId && mediaStream && listeningMode !== "ai",
-    ),
+    enabled: Boolean(roomActive && participantId && peerId && mediaStream && listeningMode !== "ai"),
     remoteMuted: !peerVoiceEnabled,
     remoteVolume: peerVoiceVolume,
     duckWhileTts: duckRemoteWhileTts,
@@ -231,136 +439,70 @@ export function Room(): JSX.Element {
     resetSignal: webrtcReset,
   });
 
-  useLayoutEffect(() => {
-    handlePeerSignalingRef.current = handlePeerWebrtcMessage;
-  }, [handlePeerWebrtcMessage]);
+  useLayoutEffect(() => { handlePeerSignalingRef.current = handlePeerWebrtcMessage; }, [handlePeerWebrtcMessage]);
 
+  useEffect(() => { setTranslationTtsMuted(!translationTtsEnabled); }, [translationTtsEnabled, setTranslationTtsMuted]);
+  useEffect(() => { setTranslationTtsVol(translationTtsVolume); }, [translationTtsVolume, setTranslationTtsVol]);
+  useEffect(() => { if (!roomActive) setMicSessionActive(false); }, [roomActive]);
   useEffect(() => {
-    setTranslationTtsMuted(!translationTtsEnabled);
-  }, [translationTtsEnabled, setTranslationTtsMuted]);
-
-  useEffect(() => {
-    setTranslationTtsVol(translationTtsVolume);
-  }, [translationTtsVolume, setTranslationTtsVol]);
-
-  useEffect(() => {
-    if (!roomActive) setMicSessionActive(false);
-  }, [roomActive]);
-
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      sendPing();
-    }, 30_000);
+    const id = window.setInterval(() => { sendPing(); }, 30_000);
     return () => window.clearInterval(id);
   }, [sendPing]);
 
   useLayoutEffect(() => {
     if (participantId && wsUrl) return;
-
     setJoinError(null);
-    if (!roomId || roomId.length !== 8) {
-      setJoinError("Invalid room code.");
-      setShowJoinForm(true);
-      setIsJoining(false);
-      return;
-    }
-
+    if (!roomId || roomId.length !== 8) { setJoinError("Invalid room code."); setShowJoinForm(true); setIsJoining(false); return; }
     const profile = resolvedProfile;
-    if (!profile) {
-      setFormName("");
-      setFormSourceLang("en");
-      setFormTargetLang("es");
-      setShowJoinForm(true);
-      setIsJoining(false);
-      return;
-    }
-
+    if (!profile) { setFormName(""); setFormSourceLang("en"); setFormTargetLang("es"); setShowJoinForm(true); setIsJoining(false); return; }
     const joinKey = ++joinKeyRef.current;
-    setShowJoinForm(false);
-    setIsJoining(true);
-
+    setShowJoinForm(false); setIsJoining(true);
     const run = async (): Promise<void> => {
       try {
         saveRoomProfile(profile);
         const res = await joinRoom(roomId, profile);
         if (joinKey !== joinKeyRef.current) return;
-        setParticipantId(res.participantId);
-        setWsUrl(res.wsUrl);
-        setIsRoomHost(res.isRoomHost === true);
-        try {
-          sessionStorage.setItem(
-            `babel-room:${roomId}:participantId`,
-            res.participantId,
-          );
-        } catch {
-          /* ignore quota */
-        }
+        setParticipantId(res.participantId); setWsUrl(res.wsUrl); setIsRoomHost(res.isRoomHost === true);
+        try { sessionStorage.setItem(`babel-room:${roomId}:participantId`, res.participantId); } catch { /* ignore */ }
         setJoinError(null);
       } catch {
         if (joinKey !== joinKeyRef.current) return;
         setJoinError("Could not join this room. It may be full, ended, or the code may be wrong.");
         setShowJoinForm(true);
-        setFormName(profile.displayName);
-        setFormSourceLang(profile.sourceLang);
-        setFormTargetLang(profile.targetLang);
-      } finally {
-        if (joinKey === joinKeyRef.current) setIsJoining(false);
-      }
+        setFormName(profile.displayName); setFormSourceLang(profile.sourceLang); setFormTargetLang(profile.targetLang);
+      } finally { if (joinKey === joinKeyRef.current) setIsJoining(false); }
     };
     void run();
   }, [roomId, resolvedProfile, participantId, wsUrl]);
 
   const onSubmitJoinForm = useCallback(async (): Promise<void> => {
     const dn = formName.trim();
-    if (!dn) {
-      setJoinError("Display name is required.");
-      return;
-    }
-    setJoinError(null);
-    setIsJoining(true);
-    const profile: RoomJoinProfile = {
-      displayName: dn,
-      sourceLang: formSourceLang,
-      targetLang: formTargetLang,
-    };
+    if (!dn) { setJoinError("Display name is required."); return; }
+    setJoinError(null); setIsJoining(true);
+    const profile: RoomJoinProfile = { displayName: dn, sourceLang: formSourceLang, targetLang: formTargetLang };
     const joinKey = ++joinKeyRef.current;
     try {
       saveRoomProfile(profile);
       const res = await joinRoom(roomId, profile);
       if (joinKey !== joinKeyRef.current) return;
-      setParticipantId(res.participantId);
-      setWsUrl(res.wsUrl);
-      setIsRoomHost(res.isRoomHost === true);
-      try {
-        sessionStorage.setItem(
-          `babel-room:${roomId}:participantId`,
-          res.participantId,
-        );
-      } catch {
-        /* ignore quota */
-      }
+      setParticipantId(res.participantId); setWsUrl(res.wsUrl); setIsRoomHost(res.isRoomHost === true);
+      try { sessionStorage.setItem(`babel-room:${roomId}:participantId`, res.participantId); } catch { /* ignore */ }
       setShowJoinForm(false);
     } catch {
       if (joinKey !== joinKeyRef.current) return;
       setJoinError("Could not join this room.");
-    } finally {
-      if (joinKey === joinKeyRef.current) setIsJoining(false);
-    }
+    } finally { if (joinKey === joinKeyRef.current) setIsJoining(false); }
   }, [formName, formSourceLang, formTargetLang, roomId]);
 
   const participantNames = useMemo(() => {
     const m: Record<string, string> = {};
-    for (const p of Object.values(participants)) {
-      m[p.id] = p.displayName;
-    }
+    for (const p of Object.values(participants)) m[p.id] = p.displayName;
     return m;
   }, [participants]);
 
   useEffect(() => {
     return () => {
-      for (const t of speakingTimers.current.values()) {
-        window.clearTimeout(t);
-      }
+      for (const t of speakingTimers.current.values()) window.clearTimeout(t);
       speakingTimers.current.clear();
     };
   }, []);
@@ -372,452 +514,384 @@ export function Room(): JSX.Element {
 
   const onConfirmEndCall = useCallback(async (): Promise<void> => {
     if (!participantId) return;
-    setEndCallError(null);
-    setEndCallBusy(true);
+    setEndCallError(null); setEndCallBusy(true);
     try {
       await endRoom(roomId, participantId);
       setMicSessionActive(false);
       await stopPlayback();
       setEndDialogOpen(false);
       navigate(`/room/${roomId}/summary`, { state: { participantId } });
-    } catch {
-      setEndCallError("Could not end the call. Try again.");
-    } finally {
-      setEndCallBusy(false);
-    }
+    } catch { setEndCallError("Could not end the call. Try again."); }
+    finally { setEndCallBusy(false); }
   }, [navigate, participantId, roomId, stopPlayback]);
 
   const onCopyLink = useCallback(async (): Promise<void> => {
     const url = joinUrlForRoom(roomId);
     try {
       await navigator.clipboard.writeText(url);
-      setCopyDone(true);
-      window.setTimeout(() => setCopyDone(false), 2500);
+      setCopyDone(true); window.setTimeout(() => setCopyDone(false), 2500);
     } catch {
       logger.error("clipboard_failed", {});
       window.prompt("Copy this link:", url);
     }
   }, [roomId]);
 
+  /* ── Show join form ─────────────────────────── */
   if (showJoinForm && (!participantId || !wsUrl)) {
     return (
-      <div className="mx-auto flex max-w-lg flex-col gap-6 px-4 py-12">
-        <header>
-          <h1 className="text-2xl font-semibold text-white">Join room</h1>
-          <p className="mt-1 font-mono text-sm text-room-accent">{roomId}</p>
-          <p className="mt-3 text-sm text-room-muted">
-            Pasted a link? Choose the language you speak and the language you want
-            to hear from others. We remember this device&apos;s last choice next
-            time.
-          </p>
-        </header>
-
-        <div className="flex flex-col gap-4 rounded-2xl border border-slate-800 bg-room-panel p-6">
-          <label className="flex flex-col gap-1 text-sm" htmlFor="roomJoinName">
-            <span className="text-room-muted">Display name</span>
-            <input
-              id="roomJoinName"
-              className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 outline-none focus:border-room-accent"
-              value={formName}
-              onChange={(e) => setFormName(e.target.value)}
-              autoComplete="nickname"
-              disabled={isJoining}
-            />
-          </label>
-          <LanguageSelector
-            id="roomJoinSource"
-            label="Language you speak"
-            value={formSourceLang}
-            onChange={setFormSourceLang}
-          />
-          <LanguageSelector
-            id="roomJoinTarget"
-            label="Language you want to hear"
-            value={formTargetLang}
-            onChange={setFormTargetLang}
-          />
-          <p className="text-xs text-room-muted">
-            <strong className="text-slate-300">How it works:</strong> open a second
-            browser or incognito, join the same room, and set complementary languages
-            (for example English→Spanish and Spanish→English). You get live
-            WebRTC voices between participants plus translated speech (TTS) in your
-            chosen &quot;hear&quot; language. Use headphones for the best experience.
-          </p>
-          {joinError ? (
-            <p className="text-sm text-rose-400" role="alert">
-              {joinError}
-            </p>
-          ) : null}
-          <button
-            type="button"
-            className="rounded-lg bg-room-accent px-4 py-2 text-sm font-medium text-slate-950 hover:bg-sky-300 disabled:opacity-50"
-            disabled={isJoining}
-            onClick={() => void onSubmitJoinForm()}
-          >
-            {isJoining ? "Joining…" : "Join room"}
-          </button>
-          <Link
-            to="/"
-            className="text-center text-sm text-room-muted underline-offset-2 hover:text-room-accent hover:underline"
-          >
-            Back to home
-          </Link>
-        </div>
-      </div>
+      <JoinForm
+        roomId={roomId}
+        name={formName}
+        sourceLang={formSourceLang}
+        targetLang={formTargetLang}
+        isJoining={isJoining}
+        error={joinError}
+        onChangeName={setFormName}
+        onChangeSource={setFormSourceLang}
+        onChangeTarget={setFormTargetLang}
+        onSubmit={() => void onSubmitJoinForm()}
+      />
     );
   }
 
+  /* ── Loading ───────────────────────────────── */
   if (!participantId || !wsUrl) {
     return (
-      <div className="mx-auto flex max-w-lg flex-col items-center gap-4 px-4 py-24">
+      <div className="flex h-screen flex-col items-center justify-center gap-4 bg-paper">
         <div
-          className="h-10 w-10 animate-spin rounded-full border-2 border-room-accent border-t-transparent"
-          aria-hidden
+          className="h-5 w-5 rounded-full border-2"
+          style={{ borderColor: "var(--rule)", borderTopColor: "var(--ink)", animation: "spin 0.8s linear infinite" }}
         />
-        <p className="text-sm text-room-muted">Joining room…</p>
+        <p className="text-sm text-ink-light">Joining room…</p>
       </div>
     );
   }
 
+  /* ── Room UI ───────────────────────────────── */
   return (
-    <div className="min-h-screen pb-10">
+    <div
+      className="flex h-screen flex-col overflow-hidden bg-paper"
+      style={{ fontFamily: "var(--sans)" }}
+    >
       <EndCallDialog
         open={endDialogOpen}
-        onClose={() => {
-          if (!endCallBusy) {
-            setEndDialogOpen(false);
-            setEndCallError(null);
-          }
-        }}
+        onClose={() => { if (!endCallBusy) { setEndDialogOpen(false); setEndCallError(null); } }}
         onConfirm={() => void onConfirmEndCall()}
         busy={endCallBusy}
         error={endCallError}
       />
-
       <audio ref={remoteAudioRef} className="hidden" autoPlay playsInline />
 
-      <header className="sticky top-0 z-20 border-b border-slate-800/80 bg-room-bg/90 px-4 py-4 backdrop-blur supports-[backdrop-filter]:bg-room-bg/75">
-        <div className="mx-auto flex max-w-6xl flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <h1 className="truncate text-xl font-semibold text-white sm:text-2xl">
-              Room{" "}
-              <span className="font-mono tracking-wide text-room-accent">
-                {roomId}
+      {/* ── Top bar ── */}
+      <div className="shrink-0 px-8" style={{ background: "var(--paper)", zIndex: 10 }}>
+        <div style={{ height: 1, background: "var(--ink)" }} />
+        <div className="flex items-center gap-0 py-3">
+          <div className="flex flex-1 items-baseline gap-3">
+            <span className="font-serif text-base text-ink">Babel Room</span>
+            <span style={{ width: 1, height: 12, background: "var(--rule)", display: "block" }} />
+            <span className="font-mono text-base font-bold tracking-[0.1em] text-ink">{roomId}</span>
+            <span style={{ width: 1, height: 12, background: "var(--rule)", display: "block" }} />
+            <div className="flex items-center gap-1.5">
+              <div
+                className="h-1.5 w-1.5 rounded-full"
+                style={{ background: "var(--accent-alt)", animation: "pulse 2s ease infinite" }}
+              />
+              <span className="text-[11px] uppercase tracking-[0.06em] text-ink-light">
+                {isCapturing ? "Microphone live" : "Mic off"}
               </span>
-            </h1>
-            <p className="mt-1 text-sm text-room-muted">
-              {isCapturing ? "Microphone live" : "Starting microphone…"}
-              {micError ? ` · ${micError}` : ""}
-              {peerId
-                ? " · Live peer audio (WebRTC) when enabled below"
-                : " · Peer audio connects automatically when two people are in the room"}
-            </p>
+            </div>
+            {micError && (
+              <span className="text-[11px] text-amber-600">· {micError}</span>
+            )}
           </div>
-          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-            <button
-              type="button"
-              title="Copies the room link. Guests can open it here or in another browser; if this device has no saved profile, they pick name and languages once."
-              className="rounded-lg border border-slate-600 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-800 sm:text-sm"
-              onClick={() => void onCopyLink()}
-            >
-              {copyDone ? "Copied" : "Copy invite link"}
-            </button>
+
+          <div className="flex items-center gap-2">
             <LatencyIndicator pipelineMs={pipelineMs} />
+            <HardBtn onClick={() => void onCopyLink()}>
+              {copyDone ? "✓ Copied" : "Copy invite"}
+            </HardBtn>
             {isRoomHost ? (
-              <button
-                type="button"
-                className="rounded-lg bg-room-danger px-3 py-2 text-xs font-medium text-slate-950 hover:brightness-110 disabled:opacity-50 sm:text-sm"
+              <HardBtn
+                variant="danger"
                 disabled={!roomActive || endCallBusy}
-                onClick={() => {
-                  setEndCallError(null);
-                  setEndDialogOpen(true);
-                }}
+                onClick={() => { setEndCallError(null); setEndDialogOpen(true); }}
               >
                 End call
-              </button>
+              </HardBtn>
             ) : (
-              <span
-                className="max-w-[11rem] text-right text-[10px] leading-snug text-slate-500 sm:max-w-none sm:text-xs"
-                title="The first person to join this room can end it and open call notes."
-              >
-                Only the host can end the call or open notes.
+              <span className="text-[10px] text-ink-faint">
+                Host only can end call
               </span>
             )}
           </div>
         </div>
-      </header>
+        <div style={{ height: 1, background: "var(--ink)" }} />
+      </div>
 
-      <div className="mx-auto max-w-6xl px-4 pt-6">
-        {!roomActive ? (
+      {/* ── Main 3-column ── */}
+      <div
+        className="min-h-0 flex-1 overflow-hidden"
+        style={{ display: "grid", gridTemplateColumns: "1fr 1px 340px", gap: 0 }}
+      >
+        {/* Left: Transcript */}
+        <div className="flex flex-col overflow-hidden">
+
+          {/* Transcript mode toolbar */}
           <div
-            className="mb-4 rounded-lg border border-amber-900/60 bg-amber-950/30 px-4 py-3 text-sm text-amber-200"
-            role="status"
+            className="flex shrink-0 items-center justify-between px-8 py-3.5"
+            style={{ borderBottom: "1px solid var(--rule)" }}
           >
-            <p>This room has ended.</p>
-            <Link
-              to="/"
-              className="mt-2 inline-block text-room-accent underline-offset-2 hover:underline"
-            >
-              Back to home
-            </Link>
-          </div>
-        ) : null}
-
-        {lastError && roomActive ? (
-          <p className="mb-4 text-sm text-amber-400" role="status">
-            {lastError}
-          </p>
-        ) : null}
-
-        <div className="grid gap-8 lg:grid-cols-[minmax(0,1.15fr)_minmax(300px,1fr)] lg:items-start">
-          <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 max-h-[min(88dvh,920px)] lg:sticky lg:top-24 lg:max-h-[calc(100dvh-6.5rem)]">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">
-                  Transcript
-                </h2>
-                <p className="mt-1 max-w-md text-xs text-slate-500">
-                  One live caption panel (updates in place; switches speaker when
-                  someone else talks). Toggle caption language with the control on
-                  the right—use Copy for the full rolling log.
-                </p>
-              </div>
-              <div
-                className="flex shrink-0 gap-0.5 rounded-xl border border-slate-600/80 bg-slate-900/80 p-1 shadow-inner"
-                role="tablist"
-                aria-label="Transcript display mode"
-              >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={transcriptMode === "mine"}
-                  className={`rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
-                    transcriptMode === "mine"
-                      ? "bg-sky-600 text-white shadow"
-                      : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-                  }`}
-                  onClick={() => setTranscriptMode("mine")}
-                >
-                  My language
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={transcriptMode === "original"}
-                  className={`rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
-                    transcriptMode === "original"
-                      ? "bg-sky-600 text-white shadow"
-                      : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-                  }`}
-                  onClick={() => setTranscriptMode("original")}
-                >
-                  Original
-                </button>
-              </div>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-light">
+                Live Transcript
+              </p>
+              <p className="mt-0.5 text-[11px] text-ink-faint">
+                One live caption panel · updates in place
+              </p>
             </div>
-            <TranscriptPanel
-              lines={lines}
-              participantNames={participantNames}
-              viewerTargetLang={myTargetLang}
-              transcriptMode={transcriptMode}
-              className="min-h-0 flex-1"
-            />
-          </section>
+            <div
+              className="flex overflow-hidden"
+              style={{ border: "1px solid var(--ink)", borderRadius: 2 }}
+            >
+              {(["translated", "original"] as const).map((m, i) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setTranscriptMode(m === "translated" ? "mine" : "original")}
+                  className="cursor-pointer px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] transition-[background,color] duration-150"
+                  style={{
+                    border: "none",
+                    borderRight: i === 0 ? "1px solid var(--ink)" : "none",
+                    background: (m === "translated" ? transcriptMode === "mine" : transcriptMode === "original")
+                      ? "var(--ink)" : "transparent",
+                    color: (m === "translated" ? transcriptMode === "mine" : transcriptMode === "original")
+                      ? "var(--paper)" : "var(--ink-light)",
+                    fontFamily: "var(--sans)",
+                  }}
+                >
+                  {m === "translated" ? "My language" : "Original"}
+                </button>
+              ))}
+            </div>
+          </div>
 
-          <div className="flex min-w-0 flex-col gap-6">
-            <section className="space-y-3">
-              <h2 className="text-sm font-medium uppercase tracking-wide text-room-muted">
-                Participants
-              </h2>
-              <ParticipantGrid
-                participants={participants}
-                selfId={participantId}
-                speakingIds={speakingIds}
-              />
-            </section>
+          {/* Room ended / errors */}
+          {!roomActive && (
+            <div className="mx-8 mt-4 shrink-0 border border-amber-200 px-3 py-2 text-sm text-amber-700" style={{ borderRadius: 2 }}>
+              This room has ended.{" "}
+              <Link to="/" className="underline underline-offset-2">Back to home</Link>
+            </div>
+          )}
+          {lastError && roomActive && (
+            <p className="mx-8 mt-3 shrink-0 text-xs text-amber-600">{lastError}</p>
+          )}
 
-            <section className="space-y-4 rounded-2xl border border-slate-700/80 bg-room-panel p-5 shadow-lg shadow-black/10">
-              <div>
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">
-                  Listening
-                </h2>
-                <p className="mt-1 text-xs leading-relaxed text-slate-500">
-                  Choose how you hear the other person: their real voice (WebRTC), AI
-                  translated speech (TTS), or both. On many networks you need TURN for
-                  WebRTC—set{" "}
-                  <code className="rounded bg-slate-800 px-1 text-room-accent">
-                    WEBRTC_ICE_SERVERS
-                  </code>{" "}
-                  on the Worker (see README).
-                </p>
-              </div>
+          {/* Transcript lines */}
+          <TranscriptPanel
+            lines={lines}
+            participantNames={participantNames}
+            viewerTargetLang={myTargetLang}
+            transcriptMode={transcriptMode}
+            embedded
+            className="min-h-0 flex-1"
+          />
 
-              <div
-                className="flex flex-col gap-2 rounded-xl border border-slate-700/60 bg-slate-950/50 p-1 sm:flex-row"
-                role="tablist"
-                aria-label="Listening source"
+          {/* Mic strip */}
+          <div
+            className="shrink-0 px-8 py-3.5"
+            style={{ borderTop: "1px solid var(--ink)", background: "var(--warm-white)" }}
+          >
+            <div className="flex items-center" style={{ gap: 14 }}>
+              <button
+                type="button"
+                onClick={() => setMicSessionActive((v) => !v)}
+                className="flex shrink-0 cursor-pointer items-center justify-center transition-all duration-150"
+                style={{
+                  width: 38,
+                  height: 38,
+                  border: `1px solid ${micSessionActive ? "var(--accent)" : "var(--ink)"}`,
+                  background: micSessionActive ? "var(--accent)" : "transparent",
+                  color: micSessionActive ? "#fff" : "var(--ink)",
+                  borderRadius: 2,
+                  boxShadow: micSessionActive ? "2px 2px 0 rgba(0,0,0,0.2)" : "2px 2px 0 var(--ink)",
+                }}
               >
-                {(
-                  [
-                    { id: "both" as const, label: "Both", hint: "Live + AI" },
-                    { id: "peer" as const, label: "People", hint: "WebRTC only" },
-                    { id: "ai" as const, label: "AI voice", hint: "TTS only" },
-                  ] as const
-                ).map((opt) => (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={listeningMode === opt.id}
-                    className={`flex flex-1 flex-col items-center rounded-lg px-3 py-2.5 text-center transition-colors ${
-                      listeningMode === opt.id
-                        ? "bg-sky-600 text-white shadow-md"
-                        : "text-slate-400 hover:bg-slate-800/80 hover:text-slate-200"
-                    }`}
-                    onClick={() => setListeningMode(opt.id)}
-                  >
-                    <span className="text-xs font-semibold">{opt.label}</span>
-                    <span
-                      className={`mt-0.5 text-[10px] ${
-                        listeningMode === opt.id ? "text-sky-100" : "text-slate-500"
-                      }`}
-                    >
-                      {opt.hint}
-                    </span>
-                  </button>
-                ))}
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M8 1a2 2 0 0 1 2 2v4a2 2 0 0 1-4 0V3a2 2 0 0 1 2-2z" stroke="currentColor" strokeWidth="1.4" fill={micSessionActive ? "currentColor" : "none"} />
+                  <path d="M4 7a4 4 0 0 0 8 0M8 11v2M6 13h4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                </svg>
+              </button>
+              <div className="flex-1">
+                <AudioVisualizer
+                  active={micSessionActive && isCapturing}
+                  color="var(--accent)"
+                />
               </div>
+              {import.meta.env.DEV && participantId ? (
+                <HardBtn
+                  variant="outline"
+                  onClick={() => {
+                    const texts = [
+                      "Testing the pipeline, can you hear me?",
+                      "The translation latency is remarkably low.",
+                      "This is running entirely on Cloudflare Workers.",
+                    ];
+                    const sourceLang = participants[participantId]?.sourceLang
+                      ?? resolvedProfile?.sourceLang
+                      ?? "en";
+                    addLine({
+                      participantId,
+                      sourceText: texts[Math.floor(Math.random() * texts.length)] ?? "",
+                      sourceLang,
+                      translations: {},
+                      ts: Date.now(),
+                    });
+                  }}
+                  style={{ padding: "5px 12px", fontSize: 11, letterSpacing: "0.05em" }}
+                >
+                  Demo speak
+                </HardBtn>
+              ) : null}
+            </div>
+            <p className="mt-2 text-[10px] uppercase tracking-[0.04em] text-ink-faint">
+              {micSessionActive && isCapturing
+                ? "● Recording — audio processed by Cloudflare Workers AI"
+                : "Click microphone to begin recording"}
+            </p>
+          </div>
+        </div>
 
-              {peerId && listeningMode !== "ai" ? (
-                <div className="rounded-lg border border-slate-700/50 bg-slate-900/40 px-3 py-2 text-xs text-slate-400">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span>
-                      WebRTC:{" "}
-                      <span className="font-medium text-slate-200">
-                        {peerConnectionState ?? "…"}
-                      </span>
-                      {iceConnectionState ? (
-                        <>
-                          {" "}
-                          · ICE:{" "}
-                          <span className="font-medium text-slate-200">
-                            {iceConnectionState}
-                          </span>
-                        </>
-                      ) : null}
+        {/* Center divider */}
+        <div style={{ background: "var(--ink)" }} />
+
+        {/* Right panel */}
+        <div className="flex flex-col overflow-y-auto">
+
+          {/* Participants */}
+          <div className="shrink-0 px-5 py-3.5" style={{ borderBottom: "1px solid var(--rule)" }}>
+            <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-light">
+              Participants · {Object.keys(participants).length}
+            </p>
+            <ParticipantGrid
+              participants={participants}
+              selfId={participantId}
+              speakingIds={speakingIds}
+              hostParticipantId={hostParticipantId}
+            />
+          </div>
+
+          {/* Listening mode */}
+          <div className="shrink-0 px-5 py-4" style={{ borderBottom: "1px solid var(--rule)" }}>
+            <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-light">
+              Listening mode
+            </p>
+
+            <div
+              className="mb-4 flex overflow-hidden"
+              style={{ border: "1px solid var(--ink)", borderRadius: 2 }}
+            >
+              {([
+                { id: "both" as const, label: "Both" },
+                { id: "peer" as const, label: "People" },
+                { id: "ai" as const, label: "AI voice" },
+              ]).map((m, i) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setListeningMode(m.id)}
+                  className="flex-1 cursor-pointer px-1 py-2 text-[11px] font-semibold uppercase tracking-[0.05em] transition-[background,color] duration-150"
+                  style={{
+                    border: "none",
+                    borderRight: i < 2 ? "1px solid var(--ink)" : "none",
+                    background: listeningMode === m.id ? "var(--ink)" : "transparent",
+                    color: listeningMode === m.id ? "var(--paper)" : "var(--ink-light)",
+                    fontFamily: "var(--sans)",
+                  }}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex flex-col gap-3.5">
+              <VolumeSlider
+                label="Live voices"
+                value={peerVoiceVolume}
+                onChange={setPeerVoiceVolume}
+                color="var(--ink)"
+                disabled={listeningMode === "ai"}
+              />
+              <VolumeSlider
+                label="AI translation"
+                value={translationTtsVolume}
+                onChange={setTranslationTtsVolume}
+                color="var(--accent)"
+                disabled={listeningMode === "peer"}
+              />
+              <Toggle
+                checked={duckRemoteWhileTts}
+                onChange={setDuckRemoteWhileTts}
+                label="Lower live voices while AI TTS plays"
+              />
+            </div>
+
+            {/* WebRTC status */}
+            {peerId && listeningMode !== "ai" && (
+              <div
+                className="mt-4 px-3 py-2 text-[11px] text-ink-light"
+                style={{ border: "1px solid var(--rule)", borderRadius: 2, background: "var(--warm-white)" }}
+              >
+                <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    WebRTC:{" "}
+                    <span className="font-medium text-ink">
+                      {peerConnectionState ?? "…"}
                     </span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {(iceConnectionState === "failed" ||
-                        iceConnectionState === "disconnected" ||
-                        peerConnectionState === "failed") && (
-                        <button
-                          type="button"
-                          className="rounded-md bg-sky-800 px-2 py-1 text-[11px] font-medium text-sky-100 hover:bg-sky-700"
-                          onClick={() => setWebrtcReset((n) => n + 1)}
-                        >
-                          Reconnect peer
-                        </button>
-                      )}
+                    {iceConnectionState && (
+                      <> · ICE: <span className="font-medium text-ink">{iceConnectionState}</span></>
+                    )}
+                  </span>
+                  <div className="flex gap-1.5">
+                    {(iceConnectionState === "failed" || iceConnectionState === "disconnected" || peerConnectionState === "failed") && (
                       <button
                         type="button"
-                        className="rounded-md bg-slate-700 px-2 py-1 text-[11px] font-medium text-slate-100 hover:bg-slate-600"
-                        onClick={() => void resumeRemoteAudio()}
+                        onClick={() => setWebrtcReset((n) => n + 1)}
+                        className="cursor-pointer px-2 py-0.5 text-[10px] font-semibold text-paper"
+                        style={{ background: "var(--ink)", borderRadius: 1 }}
                       >
-                        Play remote audio
+                        Reconnect
                       </button>
-                    </div>
-                  </div>
-                  {(iceConnectionState === "failed" ||
-                    peerConnectionState === "failed") && (
-                    <p className="mt-2 text-amber-200/90">
-                      Connection failed—tap{" "}
-                      <span className="font-medium">Play remote audio</span> after
-                      you click the page, try{" "}
-                      <span className="font-medium">Reconnect peer</span>, and ensure
-                      TURN is set in{" "}
-                      <code className="text-room-accent">WEBRTC_ICE_SERVERS</code>{" "}
-                      on the Worker (symmetric NAT / strict firewalls often need relay).
-                    </p>
-                  )}
-                  {iceConnectionState === "disconnected" &&
-                    peerConnectionState !== "failed" && (
-                      <p className="mt-2 text-slate-400">
-                        ICE disconnected—you can try{" "}
-                        <span className="font-medium text-slate-200">
-                          Reconnect peer
-                        </span>{" "}
-                        or check your network.
-                      </p>
                     )}
-                </div>
-              ) : null}
-
-              <div className="flex flex-col gap-3 text-sm">
-                <div
-                  className={`flex flex-col gap-2 ${listeningMode === "ai" ? "opacity-40" : ""}`}
-                >
-                  <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                    Live voices volume
-                  </span>
-                  <div className="flex flex-wrap items-center gap-3 text-xs text-room-muted">
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={Math.round(peerVoiceVolume * 100)}
-                      onChange={(e) =>
-                        setPeerVoiceVolume(Number(e.target.value) / 100)
-                      }
-                      disabled={listeningMode === "ai"}
-                      className="h-2 flex-1 min-w-[8rem] accent-sky-500"
-                      aria-label="Peer voice volume"
-                    />
+                    <button
+                      type="button"
+                      onClick={() => void resumeRemoteAudio()}
+                      className="cursor-pointer px-2 py-0.5 text-[10px] font-semibold text-ink"
+                      style={{ border: "1px solid var(--rule)", borderRadius: 1 }}
+                    >
+                      Play audio
+                    </button>
                   </div>
                 </div>
-                <div
-                  className={`flex flex-col gap-2 ${listeningMode === "peer" ? "opacity-40" : ""}`}
-                >
-                  <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                    AI translation (TTS) volume
-                  </span>
-                  <div className="flex flex-wrap items-center gap-3 text-xs text-room-muted">
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={Math.round(translationTtsVolume * 100)}
-                      onChange={(e) =>
-                        setTranslationTtsVolume(Number(e.target.value) / 100)
-                      }
-                      disabled={listeningMode === "peer"}
-                      className="h-2 flex-1 min-w-[8rem] accent-amber-500"
-                      aria-label="Translated TTS volume"
-                    />
-                  </div>
-                </div>
-                <label className="flex cursor-pointer items-center gap-2 text-slate-200">
-                  <input
-                    type="checkbox"
-                    checked={duckRemoteWhileTts}
-                    onChange={(e) => setDuckRemoteWhileTts(e.target.checked)}
-                    disabled={listeningMode !== "both"}
-                    className="rounded border-slate-600"
-                  />
-                  When using both, lower live voices while AI TTS plays
-                </label>
-                <p className="text-xs text-slate-500">
-                  TTS queue: {translationTtsQueueDepth}
-                  {translationTtsIsPlaying ? " · playing" : ""}
-                </p>
+                {(iceConnectionState === "failed" || peerConnectionState === "failed") && (
+                  <p className="text-[10px] text-amber-600">
+                    Connection failed — try Reconnect or ensure TURN servers are set.
+                  </p>
+                )}
               </div>
-            </section>
+            )}
+          </div>
 
-            <section className="space-y-3">
-              <h2 className="text-sm font-medium uppercase tracking-wide text-room-muted">
-                Your microphone
-              </h2>
-              <AudioVisualizer stream={mediaStream} />
-            </section>
+          {/* TTS queue */}
+          <div className="shrink-0 px-5 py-3">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-light">
+                TTS queue
+              </p>
+              <span className="font-mono text-[11px] text-ink-faint">
+                {translationTtsQueueDepth} segment{translationTtsQueueDepth !== 1 ? "s" : ""}
+                {translationTtsIsPlaying ? " · playing" : ""}
+              </span>
+            </div>
           </div>
         </div>
       </div>

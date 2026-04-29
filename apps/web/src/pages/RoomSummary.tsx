@@ -11,6 +11,30 @@ function participantKeyForRoom(roomId: string): string {
   return `babel-room:${roomId}:participantId`;
 }
 
+function SummaryShell(props: { children: React.ReactNode }): JSX.Element {
+  return (
+    <div
+      className="flex h-screen flex-col overflow-hidden bg-paper"
+      style={{ fontFamily: "var(--sans)" }}
+    >
+      {props.children}
+    </div>
+  );
+}
+
+function Masthead(props: { right: React.ReactNode }): JSX.Element {
+  return (
+    <div className="shrink-0 px-16">
+      <div style={{ height: 1, background: "var(--ink)" }} />
+      <div className="flex items-center justify-between py-4">
+        <span className="font-serif text-xl text-ink">Babel Room</span>
+        {props.right}
+      </div>
+      <div style={{ height: 1, background: "var(--ink)" }} />
+    </div>
+  );
+}
+
 export function RoomSummary(): JSX.Element {
   const { roomId: roomIdParam } = useParams();
   const location = useLocation();
@@ -21,8 +45,7 @@ export function RoomSummary(): JSX.Element {
       location.state &&
       typeof location.state === "object" &&
       "participantId" in location.state &&
-      typeof (location.state as { participantId?: unknown }).participantId ===
-        "string"
+      typeof (location.state as { participantId?: unknown }).participantId === "string"
         ? (location.state as { participantId: string }).participantId.trim()
         : "";
     if (fromState) return fromState;
@@ -111,114 +134,198 @@ export function RoomSummary(): JSX.Element {
 
   if (!roomId || roomId.length !== 8) {
     return (
-      <div className="mx-auto max-w-lg px-4 py-16 text-center text-rose-400">
-        Invalid room.
-      </div>
+      <SummaryShell>
+        <Masthead
+          right={<span className="font-mono text-[11px] tracking-[0.06em] text-ink-faint">Invalid room</span>}
+        />
+        <div className="flex flex-1 items-center justify-center p-16">
+          <p className="text-sm text-ink-light">This room link is not valid.</p>
+        </div>
+      </SummaryShell>
     );
   }
 
   if (!participantId) {
     return (
-      <div className="mx-auto flex max-w-2xl flex-col gap-4 px-4 py-12">
-        <h1 className="text-2xl font-semibold text-white">Call notes</h1>
-        <p className="text-sm text-slate-300">
-          Open this page from the same browser session right after the host ends
-          the call, or join the room from this device first so we can verify you are
-          the host.
-        </p>
-        <Link
-          to="/"
-          className="inline-flex w-fit rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800"
-        >
-          Back to home
-        </Link>
-      </div>
+      <SummaryShell>
+        <Masthead
+          right={
+            <span className="font-mono text-[11px] tracking-[0.06em] text-ink-faint">
+              Room {roomId.toUpperCase()} — ended
+            </span>
+          }
+        />
+        <div className="flex flex-1 flex-col items-center justify-center gap-6 p-16">
+          <div className="w-full max-w-md" style={{ animation: "fadeUp 0.4s ease" }}>
+            <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-light">
+              Call summary
+            </p>
+            <div style={{ height: 1, background: "var(--ink)", marginBottom: 20 }} />
+            <p className="mb-6 text-sm leading-relaxed text-ink-light">
+              Open this page from the same browser session right after the host ends the call, or join
+              the room from this device first so we can verify your access.
+            </p>
+            <Link
+              to="/"
+              className="inline-flex cursor-pointer items-center justify-center border border-ink bg-transparent px-5 py-2.5 text-sm font-semibold text-ink transition-[transform,box-shadow] duration-75"
+              style={{ borderRadius: 2, boxShadow: "2px 2px 0 var(--ink)" }}
+            >
+              Back to home
+            </Link>
+          </div>
+        </div>
+      </SummaryShell>
     );
   }
 
   if (forbidden) {
     return (
-      <div className="mx-auto flex max-w-2xl flex-col gap-4 px-4 py-12">
-        <h1 className="text-2xl font-semibold text-white">Call notes</h1>
-        <p className="text-sm text-slate-300">
-          You don&apos;t have access to these notes. Only the person who started the
-          room (the first to join) can view them after the call ends.
-        </p>
-        <Link
-          to="/"
-          className="inline-flex w-fit rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800"
-        >
-          Back to home
-        </Link>
-      </div>
+      <SummaryShell>
+        <Masthead
+          right={
+            <span className="font-mono text-[11px] tracking-[0.06em] text-ink-faint">
+              Room {roomId.toUpperCase()} — ended
+            </span>
+          }
+        />
+        <div className="flex flex-1 flex-col items-center justify-center gap-6 p-16">
+          <div className="w-full max-w-md" style={{ animation: "fadeUp 0.4s ease" }}>
+            <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-light">
+              Call summary
+            </p>
+            <div style={{ height: 1, background: "var(--ink)", marginBottom: 20 }} />
+            <p className="mb-6 text-sm leading-relaxed text-ink-light">
+              You don&apos;t have access to these notes. Only the person who started the room (the first
+              to join) can view them after the call ends.
+            </p>
+            <Link
+              to="/"
+              className="inline-flex cursor-pointer items-center justify-center border border-ink bg-transparent px-5 py-2.5 text-sm font-semibold text-ink transition-[transform,box-shadow] duration-75"
+              style={{ borderRadius: 2, boxShadow: "2px 2px 0 var(--ink)" }}
+            >
+              Back to home
+            </Link>
+          </div>
+        </div>
+      </SummaryShell>
     );
   }
 
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-12">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold text-white">Call notes</h1>
-          <p className="mt-1 font-mono text-sm text-room-muted">Room {roomId}</p>
-        </div>
-        {summary ? (
-          <button
-            type="button"
-            className="rounded-lg border border-slate-600 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-800 sm:text-sm"
-            onClick={() => void onCopyNotes()}
-          >
-            {copyDone ? "Copied" : "Copy notes"}
-          </button>
-        ) : null}
-      </header>
+    <SummaryShell>
+      <Masthead
+        right={
+          <span className="font-mono text-[11px] tracking-[0.06em] text-ink-faint">
+            Room {roomId.toUpperCase()} — ended
+          </span>
+        }
+      />
 
-      {loadError ? (
-        <p className="text-sm text-rose-400" role="alert">
-          {loadError}
-        </p>
-      ) : null}
+      <div className="flex flex-1 items-center justify-center overflow-y-auto p-16">
+        <div className="w-full max-w-[560px]" style={{ animation: "fadeUp 0.4s ease" }}>
+          <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-light">
+              Call summary
+            </p>
+            {summary ? (
+              <button
+                type="button"
+                onClick={() => void onCopyNotes()}
+                className="shrink-0 cursor-pointer bg-transparent px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-ink-light"
+                style={{ border: "1px solid var(--rule)", borderRadius: 2 }}
+              >
+                {copyDone ? "Copied" : "Copy notes"}
+              </button>
+            ) : null}
+          </div>
+          <div style={{ height: 1, background: "var(--ink)", marginBottom: 28 }} />
 
-      {summary === null && !loadError && !timedOut && !forbidden ? (
-        <div className="flex flex-col items-center gap-4 rounded-2xl border border-slate-800 bg-room-panel py-12">
-          <div
-            className="h-8 w-8 animate-spin rounded-full border-2 border-room-accent border-t-transparent"
-            aria-hidden
-          />
-          <p className="text-sm text-room-muted">Generating notes…</p>
-        </div>
-      ) : null}
-
-      {timedOut && summary === null ? (
-        <p className="rounded-xl border border-slate-800 bg-room-panel p-4 text-sm text-room-muted">
-          Notes are taking longer than expected. You can return home and try
-          opening this page again later.
-        </p>
-      ) : null}
-
-      {summary !== null ? (
-        <article className="rounded-2xl border border-slate-800 bg-room-panel p-6">
-          {segmentCount !== null ? (
-            <p className="mb-4 text-xs text-room-muted">
-              From {segmentCount} transcript segment
-              {segmentCount === 1 ? "" : "s"}.
+          {loadError ? (
+            <p className="mb-4 text-sm text-red-700" role="alert">
+              {loadError}
             </p>
           ) : null}
-          <div className="prose prose-invert prose-sm max-w-none prose-headings:text-slate-100 prose-p:text-slate-200 prose-strong:text-white prose-li:text-slate-200">
-            {summary ? (
-              <ReactMarkdown>{summary}</ReactMarkdown>
-            ) : (
-              <p className="text-slate-300">(No summary text.)</p>
-            )}
-          </div>
-        </article>
-      ) : null}
 
-      <Link
-        to="/"
-        className="inline-flex w-fit rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800"
-      >
-        Back to home
-      </Link>
-    </div>
+          {summary === null && !loadError && !timedOut && !forbidden ? (
+            <div className="flex items-center gap-4 py-8">
+              <div
+                className="h-5 w-5 shrink-0 rounded-full border-2"
+                style={{
+                  borderColor: "var(--rule)",
+                  borderTopColor: "var(--ink)",
+                  animation: "spin 0.8s linear infinite",
+                }}
+                aria-hidden
+              />
+              <div>
+                <div className="font-serif text-base font-semibold text-ink">Generating summary…</div>
+                <div className="mt-1 text-[13px] text-ink-light">Llama is processing your transcript</div>
+              </div>
+            </div>
+          ) : null}
+
+          {timedOut && summary === null ? (
+            <p
+              className="mb-6 bg-warm-white p-4 text-sm leading-relaxed text-ink-light"
+              style={{ border: "1px solid var(--rule)", borderRadius: 2 }}
+            >
+              Notes are taking longer than expected. You can return home and try opening this page again
+              later.
+            </p>
+          ) : null}
+
+          {summary !== null ? (
+            <>
+              <div className="mb-6 mt-6">
+                <h2 className="mb-4 font-serif text-[32px] tracking-[-0.02em] text-ink">Post-call notes</h2>
+                {segmentCount !== null ? (
+                  <p className="mb-4 text-xs text-ink-faint">
+                    From {segmentCount} transcript segment{segmentCount === 1 ? "" : "s"}.
+                  </p>
+                ) : null}
+                <div
+                  className="prose prose-sm max-w-none prose-headings:font-serif prose-headings:text-ink prose-p:text-ink prose-p:leading-relaxed prose-strong:text-ink prose-li:text-ink"
+                >
+                  <ReactMarkdown>{summary}</ReactMarkdown>
+                </div>
+              </div>
+
+              <div className="mb-7 flex items-center gap-2.5 border-t border-ink py-3">
+                <div className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: "var(--accent-alt)" }} />
+                <span className="text-xs text-ink-light">
+                  Saved to R2 ·{" "}
+                  <code className="rounded bg-warm-white px-1 py-px font-mono text-[11px]">
+                    rooms/{roomId}/summary.json
+                  </code>
+                </span>
+              </div>
+
+              <Link
+                to="/"
+                className="flex w-full cursor-pointer items-center justify-center gap-2 py-3.5 text-[13px] font-semibold uppercase tracking-[0.08em] text-paper transition-[transform,box-shadow] duration-75"
+                style={{
+                  background: "var(--accent)",
+                  border: "1px solid var(--accent)",
+                  borderRadius: 2,
+                  boxShadow: "2px 2px 0 rgba(0,0,0,0.25)",
+                }}
+              >
+                Start a new room →
+              </Link>
+            </>
+          ) : null}
+
+          {summary === null && (loadError || timedOut) ? (
+            <Link
+              to="/"
+              className="mt-6 inline-flex cursor-pointer items-center justify-center border border-ink bg-transparent px-5 py-2.5 text-sm font-semibold text-ink"
+              style={{ borderRadius: 2, boxShadow: "2px 2px 0 var(--ink)" }}
+            >
+              Back to home
+            </Link>
+          ) : null}
+        </div>
+      </div>
+    </SummaryShell>
   );
 }
