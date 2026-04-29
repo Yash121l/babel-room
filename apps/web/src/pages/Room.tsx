@@ -577,9 +577,9 @@ export function Room(): JSX.Element {
                   Transcript
                 </h2>
                 <p className="mt-1 max-w-md text-xs text-slate-500">
-                  Full caption stream (lyrics-style scroll); follows the newest line
-                  until you scroll up. Toggle caption mode on the right—Copy exports
-                  the buffer.
+                  One live caption panel (updates in place; switches speaker when
+                  someone else talks). Toggle caption language with the control on
+                  the right—use Copy for the full rolling log.
                 </p>
               </div>
               <div
