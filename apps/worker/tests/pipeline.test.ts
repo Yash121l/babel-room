@@ -113,11 +113,14 @@ describe("runAudioPipeline", () => {
     });
   });
 
-  it("skips translate and TTS when all target languages match source", async () => {
-    const run = vi.fn().mockResolvedValueOnce({
-      text: "hello",
-      detected_language: "en",
-    });
+  it("runs passthrough TTS when everyone hears the same language the speaker used", async () => {
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce({
+        text: "hello",
+        detected_language: "en",
+      })
+      .mockResolvedValueOnce({ audio: "bWxwYXNz" });
     const env = makeEnv({ run } as unknown as Ai);
     const chunk: AudioChunk = {
       participantId: "p",
@@ -132,8 +135,11 @@ describe("runAudioPipeline", () => {
       spokenLanguageHint: "en",
     });
     expect(result.transcript).toBe("hello");
-    expect(run).toHaveBeenCalledTimes(1);
-    expect(result.translations).toEqual({});
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(result.translations.en).toBe("hello");
+    expect(result.audioTracks.en).toBe("bWxwYXNz");
+    const meloArgs = run.mock.calls[1][1] as { prompt: string; lang: string };
+    expect(meloArgs.prompt).toBe("hello");
   });
 
   it("does not call Whisper for near-silence PCM", async () => {

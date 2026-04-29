@@ -165,11 +165,11 @@ export async function runAudioPipeline(
       );
     }
 
-    const uniqueTargets = [...new Set(options.targetLanguages)].filter(
-      (t) => t !== sourceLang,
-    );
+    const distinctTargets = [...new Set(options.targetLanguages)];
+    const translateTargets = distinctTargets.filter((t) => t !== sourceLang);
+    const passthroughTargets = distinctTargets.filter((t) => t === sourceLang);
 
-    if (uniqueTargets.length === 0) {
+    if (translateTargets.length === 0 && passthroughTargets.length === 0) {
       return {
         transcript,
         sourceLang,
@@ -179,8 +179,8 @@ export async function runAudioPipeline(
       };
     }
 
-    const perLang = await Promise.all(
-      uniqueTargets.map(async (targetLang) => {
+    const translatedRows = await Promise.all(
+      translateTargets.map(async (targetLang) => {
         let translated = "";
         try {
           const tr = (await env.AI.run(LLAMA_MODEL, {
@@ -231,6 +231,37 @@ Output ONLY the translation, no explanation.
         return { targetLang, translated, audioB64 };
       }),
     );
+
+    const passthroughRows = await Promise.all(
+      passthroughTargets.map(async (targetLang) => {
+        let audioB64 = "";
+        try {
+          const melo = (await env.AI.run(MELOTTS_MODEL, {
+            prompt: transcript,
+            lang: LANGUAGE_TO_MELOTTS_LANG[targetLang],
+          })) as { audio?: string };
+          audioB64 = melo.audio ?? "";
+        } catch (e) {
+          console.error(
+            JSON.stringify({
+              level: "error",
+              event: "tts_passthrough_failed",
+              ...logCtx,
+              sequenceNum: chunk.sequenceNum,
+              targetLang,
+              message: String(e),
+            }),
+          );
+        }
+        return {
+          targetLang,
+          translated: transcript,
+          audioB64,
+        };
+      }),
+    );
+
+    const perLang = [...translatedRows, ...passthroughRows];
 
     const translations = {} as Record<Language, string>;
     const audioTracks = {} as Record<Language, string>;
