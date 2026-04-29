@@ -104,6 +104,14 @@ function useNowTick(intervalMs: number): number {
   return now;
 }
 
+function streamTailSignature(lines: TranscriptLine[]): string {
+  const last = lines.at(-1);
+  if (!last) return "0";
+  return `${lines.length}:${last.id}:${last.receivedAt}:${last.sourceText.length}`;
+}
+
+const SCROLL_BOTTOM_SLACK_PX = 100;
+
 export function TranscriptPanel(props: {
   lines: TranscriptLine[];
   participantNames: Record<string, string>;
@@ -115,30 +123,39 @@ export function TranscriptPanel(props: {
     props;
   const [copyDone, setCopyDone] = useState(false);
   const nowTick = useNowTick(1000);
-  const prevSpeakerIdRef = useRef<string | null>(null);
-  const [speakerSwapFlash, setSpeakerSwapFlash] = useState(false);
-
-  const displayLine = lines.length > 0 ? lines[lines.length - 1] : null;
-
-  useEffect(() => {
-    if (!displayLine) {
-      prevSpeakerIdRef.current = null;
-      return;
-    }
-    const prev = prevSpeakerIdRef.current;
-    prevSpeakerIdRef.current = displayLine.participantId;
-    if (prev !== null && prev !== displayLine.participantId) {
-      setSpeakerSwapFlash(true);
-      const t = window.setTimeout(() => setSpeakerSwapFlash(false), 380);
-      return () => window.clearTimeout(t);
-    }
-    return undefined;
-  }, [displayLine?.participantId]);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [pinnedToLive, setPinnedToLive] = useState(true);
+  const pinnedToLiveRef = useRef(true);
+  pinnedToLiveRef.current = pinnedToLive;
 
   const viewerLabel = useMemo(
     () => LANGUAGE_LABEL[viewerTargetLang] ?? viewerTargetLang,
     [viewerTargetLang],
   );
+
+  const onScroll = useCallback((): void => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const slack = SCROLL_BOTTOM_SLACK_PX;
+    const atBottom =
+      el.scrollHeight - el.scrollTop - el.clientHeight <= slack;
+    setPinnedToLive(atBottom);
+  }, []);
+
+  const tailSig = useMemo(() => streamTailSignature(lines), [lines]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !pinnedToLiveRef.current) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [tailSig]);
+
+  const jumpToLatest = useCallback((): void => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    setPinnedToLive(true);
+  }, []);
 
   const onCopyTranscript = useCallback(async (): Promise<void> => {
     if (lines.length === 0) return;
@@ -157,80 +174,54 @@ export function TranscriptPanel(props: {
     }
   }, [lines, participantNames, viewerTargetLang, transcriptMode]);
 
-  const caption = displayLine
-    ? captionForViewer(displayLine, viewerTargetLang)
-    : null;
-
-  const primary =
-    displayLine && caption
-      ? transcriptMode === "original"
-        ? {
-            text: stripTranslationArtifacts(displayLine.sourceText),
-            lang: displayLine.sourceLang,
-          }
-        : { text: caption.text, lang: caption.lang }
-      : null;
-
-  const ageMs = displayLine ? nowTick - displayLine.receivedAt : 0;
-  const freshness = freshnessTone(ageMs);
-  const freshnessClass =
-    freshness === "live"
+  const lastLine = lines.at(-1);
+  const lastAgeMs = lastLine ? nowTick - lastLine.receivedAt : 0;
+  const lastFresh = freshnessTone(lastAgeMs);
+  const lastFreshClass =
+    lastFresh === "live"
       ? "text-emerald-400"
-      : freshness === "recent"
+      : lastFresh === "recent"
         ? "text-amber-300/90"
         : "text-slate-500";
 
-  const spokenShort = displayLine
-    ? (LANGUAGE_LABEL[displayLine.sourceLang] ?? displayLine.sourceLang)
-    : "";
-  const captionShort = primary
-    ? (LANGUAGE_LABEL[primary.lang] ?? primary.lang)
-    : "";
-
-  const crossLang =
-    displayLine && displayLine.sourceLang !== viewerTargetLang;
-  const srcStripped = displayLine
-    ? stripTranslationArtifacts(displayLine.sourceText)
-    : "";
-  const translatedDiffers =
-    primary && caption
-      ? primary.text.trim() !== srcStripped.trim()
-      : false;
-  const showOriginalSub =
-    Boolean(displayLine) &&
-    transcriptMode === "mine" &&
-    caption &&
-    !caption.missingTranslation &&
-    crossLang &&
-    translatedDiffers;
-
-  const speakerName = displayLine
-    ? (participantNames[displayLine.participantId] ?? "Participant")
-    : "";
-
   return (
     <div
-      className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-800/90 bg-slate-950/80 ${className ?? ""}`}
+      className={`relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-800/90 bg-slate-950/80 ${className ?? ""}`}
     >
       <div className="flex shrink-0 items-start justify-between gap-2 border-b border-slate-800/80 px-3 py-2 sm:px-4">
         <div className="min-w-0">
           <p className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
-            Live caption
+            Caption stream
           </p>
           <p className="mt-0.5 text-[11px] leading-snug text-slate-400 sm:text-xs">
+            <span className="font-medium text-sky-200">{viewerLabel}</span>
             {transcriptMode === "mine" ? (
-              <>
-                <span className="font-medium text-sky-200">{viewerLabel}</span>
-                · one screen updates in place; switches when someone else speaks
-              </>
+              <> · full history scrolls like lyrics; auto-follows the end</>
             ) : (
-              <>
-                Raw spoken text ·{" "}
-                <span className="font-medium text-sky-200">{viewerLabel}</span>{" "}
-                in details
-              </>
+              <> · original + {viewerLabel} line per cue</>
             )}
           </p>
+          {lines.length > 0 ? (
+            <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[10px] text-slate-500 sm:text-[11px]">
+              <span className={`inline-flex items-center gap-1 font-medium ${lastFreshClass}`}>
+                <span
+                  className={`h-1 w-1 shrink-0 rounded-full ${
+                    lastFresh === "live"
+                      ? "bg-emerald-400"
+                      : lastFresh === "recent"
+                        ? "bg-amber-400"
+                        : "bg-slate-500"
+                  }`}
+                  aria-hidden
+                />
+                Latest {ageLabelFromMs(lastAgeMs)}
+              </span>
+              <span className="text-slate-600">·</span>
+              <span>
+                Buffer {lines.length}/{TRANSCRIPT_BUFFER_MAX_LINES} for Copy
+              </span>
+            </p>
+          ) : null}
         </div>
         <button
           type="button"
@@ -243,127 +234,161 @@ export function TranscriptPanel(props: {
       </div>
 
       <div
-        className="flex min-h-0 flex-1 flex-col px-3 py-3 sm:px-4"
+        ref={scrollRef}
+        onScroll={onScroll}
+        className="relative min-h-0 flex-1 overflow-y-auto overscroll-y-contain scroll-smooth px-3 py-3 [scrollbar-gutter:stable] sm:px-4"
         style={
           {
-            touchAction: "manipulation",
+            touchAction: "pan-y",
+            WebkitOverflowScrolling: "touch",
           } as CSSProperties
         }
       >
-        {!displayLine ? (
-          <div className="flex min-h-[12rem] flex-1 flex-col items-center justify-center gap-1 text-center">
+        {/* Top fade — lyric / music-app feel */}
+        <div
+          className="pointer-events-none sticky top-0 z-10 -mx-3 h-8 bg-gradient-to-b from-slate-950/95 to-transparent sm:-mx-4"
+          aria-hidden
+        />
+
+        {lines.length === 0 ? (
+          <div className="flex min-h-[10rem] flex-col items-center justify-center gap-1 py-12 text-center">
             <p className="text-sm font-medium text-slate-300">Waiting for speech</p>
             <p className="max-w-xs text-xs text-slate-500">
-              The last line stays here and grows while the same person talks; the
-              view refreshes when another participant speaks.
+              Lines stack here as they arrive. Scroll stays pinned to the newest
+              line unless you move up.
             </p>
           </div>
         ) : (
-          <div
-            className={`flex min-h-0 flex-1 flex-col rounded-lg border border-slate-800/70 bg-slate-900/40 ${
-              speakerSwapFlash ? "motion-safe:animate-transcript-in" : ""
-            }`}
-          >
-            <div className="shrink-0 border-b border-slate-800/50 px-3 py-2 sm:px-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <span
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-800/90 text-xs font-semibold text-slate-100 ring-1 ring-slate-600/80"
-                  aria-hidden
+          <div className="flex flex-col gap-6 pb-16 pt-1">
+            {lines.map((line, index) => {
+              const name = participantNames[line.participantId] ?? "Participant";
+              const time = formatLineTime(line.ts);
+              const cap = captionForViewer(line, viewerTargetLang);
+              const spokenShort =
+                LANGUAGE_LABEL[line.sourceLang] ?? line.sourceLang;
+              const primary =
+                transcriptMode === "original"
+                  ? {
+                      text: stripTranslationArtifacts(line.sourceText),
+                      lang: line.sourceLang,
+                    }
+                  : { text: cap.text, lang: cap.lang };
+              const captionShort =
+                LANGUAGE_LABEL[primary.lang] ?? primary.lang;
+              const srcStripped = stripTranslationArtifacts(line.sourceText);
+              const crossLang = line.sourceLang !== viewerTargetLang;
+              const translatedDiffers =
+                primary.text.trim() !== srcStripped.trim();
+              const showOriginalSub =
+                transcriptMode === "mine" &&
+                !cap.missingTranslation &&
+                crossLang &&
+                translatedDiffers;
+              const showTranslationSub =
+                transcriptMode === "original" &&
+                Boolean(line.translations[viewerTargetLang]);
+              const fromEnd = lines.length - 1 - index;
+              const recency = Math.min(1, fromEnd / 6);
+              const opacity = 0.38 + recency * 0.62;
+              const isLatest = fromEnd === 0;
+              const ageMs = nowTick - line.receivedAt;
+              const fresh = freshnessTone(ageMs);
+
+              return (
+                <article
+                  key={line.id}
+                  className={`border-l-2 pl-3 transition-opacity duration-300 sm:pl-4 ${
+                    isLatest
+                      ? "border-sky-400/90"
+                      : fresh === "stale"
+                        ? "border-slate-700/60"
+                        : "border-slate-600/50"
+                  }`}
+                  style={{ opacity }}
                 >
-                  {speakerName.slice(0, 1).toUpperCase()}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-slate-100">
-                    {speakerName}
-                  </p>
-                  <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-slate-400 sm:text-xs">
-                    <span className="font-mono text-slate-500">
-                      {formatLineTime(displayLine.ts)}
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px] text-slate-500 sm:text-xs">
+                    <span
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-800/80 text-[10px] font-semibold text-slate-200 ring-1 ring-slate-700/80"
+                      aria-hidden
+                    >
+                      {name.slice(0, 1).toUpperCase()}
                     </span>
+                    <span className="font-medium text-slate-200">{name}</span>
+                    <span className="font-mono text-slate-500">{time}</span>
                     <span className="text-slate-600">·</span>
                     <span>{spokenShort}</span>
                     <span className="text-slate-600">·</span>
-                    <span className="text-sky-300/90">
+                    <span className="text-sky-300/80">
                       {transcriptMode === "mine" ? captionShort : "Original"}
                     </span>
-                  </p>
-                </div>
-              </div>
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] sm:text-xs">
-                <span
-                  className={`inline-flex items-center gap-1.5 font-medium ${freshnessClass}`}
-                  title="Time since this caption last updated on your device"
-                >
-                  <span
-                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                      freshness === "live"
-                        ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]"
-                        : freshness === "recent"
-                          ? "bg-amber-400"
-                          : "bg-slate-500"
-                    }`}
-                    aria-hidden
-                  />
-                  {ageLabelFromMs(ageMs)}
-                </span>
-                <span className="text-slate-600">·</span>
-                <span className="text-slate-500">
-                  Buffer TTL: last {TRANSCRIPT_BUFFER_MAX_LINES} lines kept for Copy
-                </span>
-              </div>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-4 sm:py-4 [scrollbar-gutter:stable]">
-              {primary ? (
-                <p className="whitespace-pre-wrap text-base leading-relaxed text-slate-100 sm:text-lg">
-                  {primary.text}
-                </p>
-              ) : null}
-
-              {transcriptMode === "mine" && caption?.missingTranslation ? (
-                <p className="mt-3 text-xs text-amber-300/90" role="status">
-                  No caption for {viewerLabel} yet—showing original above.
-                </p>
-              ) : null}
-
-              {showOriginalSub ? (
-                <details className="group mt-4 border-t border-slate-800/60 pt-3">
-                  <summary className="cursor-pointer list-none text-[11px] font-medium text-slate-500 marker:hidden hover:text-slate-400 [&::-webkit-details-marker]:hidden">
-                    <span className="inline-flex items-center gap-1">
-                      <span className="text-slate-600 transition-transform group-open:rotate-90">
-                        ▸
-                      </span>
-                      Original ({spokenShort})
+                    <span className="text-slate-600">·</span>
+                    <span
+                      className={
+                        fresh === "live"
+                          ? "text-emerald-400/90"
+                          : fresh === "recent"
+                            ? "text-amber-300/80"
+                            : "text-slate-500"
+                      }
+                    >
+                      {ageLabelFromMs(ageMs)}
                     </span>
-                  </summary>
-                  <p className="mt-2 border-l border-slate-700/50 pl-3 text-sm leading-relaxed text-slate-400">
-                    {srcStripped}
-                  </p>
-                </details>
-              ) : null}
+                  </div>
 
-              {transcriptMode === "original" &&
-              displayLine.translations[viewerTargetLang] ? (
-                <details className="group mt-4 border-t border-slate-800/60 pt-3">
-                  <summary className="cursor-pointer list-none text-[11px] font-medium text-slate-500 marker:hidden hover:text-slate-400 [&::-webkit-details-marker]:hidden">
-                    <span className="inline-flex items-center gap-1">
-                      <span className="text-slate-600 transition-transform group-open:rotate-90">
-                        ▸
-                      </span>
-                      {viewerLabel}
-                    </span>
-                  </summary>
-                  <p className="mt-2 border-l border-slate-700/50 pl-3 text-sm leading-relaxed text-slate-300">
-                    {stripTranslationArtifacts(
-                      displayLine.translations[viewerTargetLang] ?? "",
-                    )}
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-100 sm:text-[15px]">
+                    {primary.text}
                   </p>
-                </details>
-              ) : null}
-            </div>
+
+                  {showOriginalSub ? (
+                    <p className="mt-2 border-l border-slate-700/60 pl-2.5 text-xs leading-relaxed text-slate-400 sm:text-sm">
+                      <span className="font-medium text-slate-500">
+                        Original ({spokenShort})
+                      </span>
+                      <br />
+                      {srcStripped}
+                    </p>
+                  ) : null}
+
+                  {showTranslationSub ? (
+                    <p className="mt-2 border-l border-sky-900/40 pl-2.5 text-xs leading-relaxed text-slate-300 sm:text-sm">
+                      <span className="font-medium text-sky-400/80">
+                        {viewerLabel}
+                      </span>
+                      <br />
+                      {stripTranslationArtifacts(
+                        line.translations[viewerTargetLang] ?? "",
+                      )}
+                    </p>
+                  ) : null}
+
+                  {transcriptMode === "mine" && cap.missingTranslation ? (
+                    <p className="mt-1.5 text-[11px] text-amber-300/90" role="status">
+                      No caption for {viewerLabel}—original above.
+                    </p>
+                  ) : null}
+                </article>
+              );
+            })}
           </div>
         )}
+
+        <div
+          className="pointer-events-none sticky bottom-0 z-10 -mx-3 h-10 bg-gradient-to-t from-slate-950/95 to-transparent sm:-mx-4"
+          aria-hidden
+        />
       </div>
+
+      {!pinnedToLive && lines.length > 0 ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center px-3">
+          <button
+            type="button"
+            onClick={jumpToLatest}
+            className="pointer-events-auto rounded-full border border-sky-600/80 bg-sky-950/95 px-4 py-2 text-xs font-semibold text-sky-100 shadow-lg shadow-black/40 backdrop-blur-sm hover:bg-sky-900/95"
+          >
+            Jump to latest
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
