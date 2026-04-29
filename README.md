@@ -1,5 +1,157 @@
 # Babel Room
 
+Real-time **multilingual voice** on Cloudflare: capture speech in the browser, run **STT → translation → TTS** on the Worker with **Workers AI**, fan out **captions and translated audio** over **WebSockets** (Durable Object), persist metadata and transcripts in **D1**, optional **WebRTC** for natural peer audio when two or more people are in a room, and generate **post-call summaries** (Workflow + **R2**). The UI is **React + Vite + Tailwind**, shipped as static assets on the same Worker as `/api/*`.
+
+---
+
+## For newcomers: what runs where
+
+| Layer | Role |
+|-------|------|
+| **Browser** | Mic capture (PCM), sequential TTS playback, transcript UI, optional WebRTC peer audio. Calls REST for room lifecycle and audio chunks; opens one WebSocket per room. |
+| **Worker (Hono)** | HTTP API, CORS, orchestrates **Workers AI** pipeline, writes **D1**, triggers **RoomDO** internal fetches, starts **PostCallSummaryWorkflow**. |
+| **RoomDO** (Durable Object) | One instance per `roomId` (name-based id). WebSocket hub: presence, signaling, broadcast transcripts, **targeted** translated MP3 to each listener’s `targetLang`. DO **SQLite** stores participants and audio rate-limit events across hibernation. |
+| **D1** | Long-lived `rooms`, `participants`, `transcript_segments`; host id for permissions. |
+| **R2** | `rooms/<roomId>/summary.json` written by the post-call workflow. |
+| **Workers AI** | Whisper (STT), Llama (translate), MeloTTS (MP3 base64 per language). |
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TB
+  subgraph Browser["Browser (SPA)"]
+    UI[React UI]
+    Mic[Mic / AudioContext]
+    WS[Room WebSocket]
+    RTC[WebRTC optional]
+  end
+
+  subgraph Worker["Cloudflare Worker (Hono)"]
+    API["/api/* REST"]
+    Pipe[pipeline.ts STT translate TTS]
+  end
+
+  subgraph CF["Cloudflare platform"]
+    DO[RoomDO WebSocket + fan-out]
+    D1[(D1)]
+    R2[(R2 summaries)]
+    AI[Workers AI]
+    WF[PostCallSummaryWorkflow]
+  end
+
+  UI --> API
+  Mic --> API
+  API --> Pipe
+  Pipe --> AI
+  API --> D1
+  API --> DO
+  WS <--> DO
+  RTC <--> DO
+  API --> WF
+  WF --> D1
+  WF --> AI
+  WF --> R2
+```
+
+Static routing (production): `[assets]` in `apps/worker/wrangler.toml` points at `../web/dist` with `run_worker_first = ["/api/*"]` so only API and WebSocket upgrade paths execute the script; everything else is the SPA shell.
+
+---
+
+## Data flows
+
+### 1. Create room → join → WebSocket
+
+1. **POST `/api/rooms`** — Worker generates an 8-character `roomId`, inserts a `rooms` row in **D1**.
+2. **POST `/api/rooms/:roomId/join`** — Body: `displayName`, `sourceLang` (speak), `targetLang` (hear). Worker inserts **D1** `participants`, assigns **host** if the room had none (`host_participant_id`), returns `participantId` and **`wsUrl`** (same host, `wss` in prod).
+3. **GET `/api/rooms/:roomId/ws?...`** — Worker proxies to **RoomDO** (`idFromName(roomId)`). DO accepts the WebSocket, persists the participant in DO SQLite, sends `room_state`, broadcasts `participant_joined`.
+
+### 2. Voice chunk: HTTP pipeline → DO fan-out
+
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant W as Worker Hono
+  participant AI as Workers AI
+  participant D1 as D1
+  participant DO as RoomDO
+
+  B->>W: POST /api/rooms/:id/audio pcmBase64
+  W->>DO: internal rate-limit-audio
+  DO-->>W: 200 / 429
+  W->>D1: target langs + whisper hints
+  W->>AI: Whisper STT
+  W->>AI: Llama translate + MeloTTS per target
+  W->>DO: broadcast-pipeline-result
+  Note over DO: Per listener: translated_audio if audioTracks[targetLang]
+  Note over DO: transcript_segment broadcast to all
+  W->>D1: insertTranscriptSegment if non-empty
+  W-->>B: 200 PipelineResult JSON
+```
+
+- **Rate limit**: DO tracks recent audio posts per participant; **429** if over limit.
+- **Pipeline** (`apps/worker/src/pipeline.ts`): PCM → WAV for Whisper → optional silence gate → translate + TTS for each distinct **`targetLang`** in the room (from D1). Sanitized transcript text is stored and sent on the wire.
+- **Fan-out** (`RoomDO.handlePipelineResult`): **Speaker does not** receive their own TTS. Each **other** participant gets `translated_audio` with MP3 base64 for **their** `targetLang`. **Everyone** gets `transcript_segment` (source + per-language strings for captions).
+- **Web transcript UI** (`TranscriptPanel`): The room uses **one live caption viewport** (not a scrolling card list). The client **coalesces** segments from the same speaker within a short window so long continuous speech (e.g. read-aloud) grows **one block** in place; the panel **emphasis switches** when another participant’s segment arrives. **Copy transcript** still exports the rolling in-memory buffer (capped in `useTranscript`). **Freshness** is derived from client `receivedAt` on each line (age since the caption last updated).
+
+### 3. WebRTC (peer natural audio)
+
+- With **two or more** participants, the UI can open a **mesh** WebRTC path: **`webrtc_signal`** messages (offer / answer / ICE) are relayed **only through RoomDO** to the named peer (`RoomClientMessage` in `@babel-room/shared`).
+- **ICE servers**: **GET `/api/webrtc-ice`** returns STUN/TURN from env (see TURN section below).
+
+### 4. End call → summary
+
+1. **Host** calls **DELETE `/api/rooms/:roomId`** with `{ participantId }`. Worker sets `ended_at`, tells DO **`/internal/room-ended`** (broadcast `room_ended`, close sockets).
+2. Worker enqueues **`PostCallSummaryWorkflow`** (`apps/worker/src/workflows.ts`): read **D1** transcript lines → **Llama** Markdown summary → **PUT** `rooms/<roomId>/summary.json` on **R2**.
+3. Host polls **GET `/api/rooms/:roomId/summary?participantId=...`** until `status: "ready"` or still `pending`.
+
+---
+
+## HTTP API (surface)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/rooms` | Create room; returns `roomId`, `joinUrl`. |
+| GET | `/api/rooms/:roomId` | Room metadata (exists, ended, participant count). |
+| POST | `/api/rooms/:roomId/join` | Join; returns `participantId`, `wsUrl`, `isRoomHost`. |
+| GET | `/api/rooms/:roomId/ws` | WebSocket upgrade (proxied to RoomDO). |
+| POST | `/api/rooms/:roomId/audio` | Upload PCM chunk; runs AI pipeline; returns `PipelineResult`. |
+| DELETE | `/api/rooms/:roomId` | End room (**host only**); triggers summary workflow. |
+| GET | `/api/rooms/:roomId/summary` | Post-call notes from R2 (**host only**). |
+| GET | `/api/webrtc-ice` | ICE server list for the browser. |
+
+**Dev-only** (requires `BABEL_DEV_TOOLS=1` on the Worker): `GET .../dev/participants`, `POST .../dev/inject-transcript`, `POST .../dev/inject-translated-audio`.
+
+Shared wire types and WebSocket payloads live in **`packages/shared`** (`Participant`, `WSMessageType`, `RoomClientMessage`, `PipelineResult`, etc.).
+
+---
+
+## Persistence model (D1)
+
+- **`rooms`**: `id`, `created_at`, `ended_at`, `participant_count`, `host_participant_id` (first joiner).
+- **`participants`**: `id`, `room_id`, display name, `source_language`, `target_language`, `joined_at`, `left_at`.
+- **`transcript_segments`**: one row per non-empty STT segment (source text + language + timing); used by the summary workflow.
+
+Migrations: `apps/worker/migrations/` — apply with `wrangler d1 migrations apply`.
+
+**RoomDO SQLite** (separate from D1): in-memory + durable tables for `do_participants`, `room_meta`, `audio_rate_events` so presence and rate limits survive DO hibernation.
+
+---
+
+## Repository layout
+
+| Path | Contents |
+|------|----------|
+| `apps/worker` | Hono app (`src/index.ts`), `RoomDO` (`room.ts`), `runAudioPipeline` (`pipeline.ts`), sanitize/schemas, D1 queries, migrations, Wrangler config. |
+| `apps/web` | Vite SPA: `Room.tsx`, hooks (`useRoom`, `useWebRTC`, peer audio), `lib/api.ts`, transcript UI. |
+| `packages/shared` | Shared TypeScript types for API and WebSocket. |
+| `scripts/` | `ensure-web-dist.mjs`, `bootstrap-cloudflare.sh`. |
+
+Root **`npm run dev`** runs local D1 migrations, Wrangler API on **8788**, and Vite on **5173** with `/api` proxied. See **Local development** below for other modes.
+
+---
+
 ## Quick start (local)
 
 From the **repository root** after `npm install`:
@@ -39,34 +191,6 @@ The **first participant to join** a room becomes the **host** (`rooms.host_parti
 
 ---
 
-Production-oriented **real-time multilingual voice** stack on Cloudflare: **Workers + Durable Objects** (WebSocket hibernation) + **Workers AI** (STT / translation / TTS) + **D1** + **R2** + **Workflows**, with a **React + Vite + Tailwind** UI deployed as **[static assets](https://developers.cloudflare.com/workers/static-assets/)** on the same Worker as `/api/*`.
-
-## Architecture
-
-```
-  Browser
-        |
-        |  HTTPS + WSS (same origin when deployed)
-        v
-+---------------------------+
-|  Worker (Hono)            |
-|  /api/*  -> Worker        |
-|  /*      -> Vite dist SPA |
-+---------------------------+
-         |
-    +----+----+--------------+
-    |         |              |
-    v         v              v
- RoomDO    Workers AI     D1 / R2
- (SQLite   whisper /      metadata,
-  WS hub)  llama /        transcripts,
-           melotts        summaries
-```
-
-- **`[assets]`** in `apps/worker/wrangler.toml`: `../web/dist`, `not_found_handling = "single-page-application"`, `run_worker_first = ["/api/*"]` so only API/WebSocket traffic hits your script; the shell is served from the build output.
-- **D1 migrations** live in `apps/worker/migrations/` (`wrangler d1 migrations apply`).
-- **`npm run deploy`** (repo root) builds the web app, then runs `wrangler deploy` for the worker.
-
 ## Production deploy
 
 From the repo root (after `npx wrangler login` locally, or with `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` in the environment):
@@ -80,6 +204,8 @@ This builds `apps/web` into `apps/web/dist`, then deploys the Worker in `apps/wo
 **CORS:** `[vars] ALLOWED_ORIGINS` in `wrangler.toml` / `wrangler.test.toml` controls API access. Leave empty or set to `*` (via dashboard override) for permissive dev. In production, set a comma-separated allowlist, e.g. `https://babel-room-worker.your-account.workers.dev`.
 
 **D1:** Migration `0002_drop_rooms_languages_used.sql` removes an unused column; apply remote/local migrations after upgrading the repo.
+
+---
 
 ## CI/CD (GitHub Actions)
 
@@ -98,6 +224,8 @@ In GitHub: **Settings → Secrets and variables → Actions → New repository s
 | `CLOUDFLARE_ACCOUNT_ID` | **Workers & Pages** overview → copy **Account ID** (32-char hex). |
 
 Optional: add a [GitHub Environment](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment) named `production` with required reviewers if you want a manual approval gate before deploy.
+
+---
 
 ## Cloudflare resources (checklist)
 
@@ -122,6 +250,8 @@ bash scripts/bootstrap-cloudflare.sh
 ### Optional: Cloudflare Realtime / RealtimeKit (SFU)
 
 Not wired in this repo. When you add WebRTC SFU signaling, put token issuance in `apps/worker/src/realtime.ts` and add any **secrets** / **vars** in Wrangler; keep media on Workers + DO + AI as today until you integrate.
+
+---
 
 ## Setup
 
@@ -159,6 +289,8 @@ Not wired in this repo. When you add WebRTC SFU signaling, put token issuance in
 
 After deploy, open the **Workers** route URL; `/` is the SPA and `/api/*` is the API (same origin, no `VITE_API_BASE_URL` needed).
 
+---
+
 ## Local development
 
 | What you run | Ports | Open |
@@ -171,6 +303,8 @@ Wrangler dev always passes **`--port 8787`** or **`--port 8788`** so the listen 
 
 **`npm run db:setup:local -w babel-room-worker`** applies migrations for **both** local D1 bindings (main + test config). Root **`npm run dev`** runs that first.
 
+---
+
 ## Tests
 
 ```bash
@@ -180,15 +314,10 @@ npm test
 
 Vitest uses `wrangler.test.toml` (no static assets folder). `isolatedStorage: false` is required when Workflows are defined.
 
+---
+
 ## Known limitations
 
 - **TTS latency** is often on the order of **~300ms per language** on Workers AI.
 - **MeloTTS** returns **MP3** (base64), not raw PCM; the web client uses `decodeAudioData`.
 - **RoomDO** persists participants in DO SQLite so state survives hibernation.
-
-## Repository layout
-
-- `apps/worker` — Hono API, `RoomDO`, pipeline, workflows, D1 migrations, Wrangler config.
-- `apps/web` — Vite + React UI.
-- `packages/shared` — shared TypeScript types.
-- `scripts/` — `ensure-web-dist.mjs`, `bootstrap-cloudflare.sh`.

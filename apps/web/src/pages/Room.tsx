@@ -577,8 +577,9 @@ export function Room(): JSX.Element {
                   Transcript
                 </h2>
                 <p className="mt-1 max-w-md text-xs text-slate-500">
-                  Scroll the conversation below. Toggle caption language with the
-                  control on the right.
+                  One live caption panel (updates in place; switches speaker when
+                  someone else talks). Toggle caption language with the control on
+                  the right—use Copy for the full rolling log.
                 </p>
               </div>
               <div

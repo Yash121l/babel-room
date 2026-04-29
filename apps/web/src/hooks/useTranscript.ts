@@ -7,7 +7,10 @@ export interface TranscriptLine {
   sourceText: string;
   sourceLang: Language;
   translations: Partial<Record<Language, string>>;
+  /** Server-ish segment time from pipeline. */
   ts: number;
+  /** Client time when this line was created or last coalesced into (freshness / age UI). */
+  receivedAt: number;
 }
 
 const COALESCE_MAX_GAP_MS = 1500;
@@ -26,14 +29,16 @@ function mergeTranslations(
   return out;
 }
 
+export const TRANSCRIPT_BUFFER_MAX_LINES = 200;
+
 export function useTranscript(): {
   lines: TranscriptLine[];
-  addLine: (line: Omit<TranscriptLine, "id">) => void;
+  addLine: (line: Omit<TranscriptLine, "id" | "receivedAt">) => void;
   clear: () => void;
 } {
   const [lines, setLines] = useState<TranscriptLine[]>([]);
 
-  const addLine = useCallback((line: Omit<TranscriptLine, "id">) => {
+  const addLine = useCallback((line: Omit<TranscriptLine, "id" | "receivedAt">) => {
     if (!line.sourceText.trim()) return;
     setLines((prev) => {
       const last = prev[prev.length - 1];
@@ -45,23 +50,25 @@ export function useTranscript(): {
         line.ts - last.ts < COALESCE_MAX_GAP_MS &&
         last.sourceText.length + 1 + nextChunk.length <= COALESCE_MAX_CHARS;
 
+      const now = Date.now();
       if (canCoalesce) {
         const merged: TranscriptLine = {
           ...last,
           sourceText: `${last.sourceText} ${nextChunk}`.trim(),
           translations: mergeTranslations(last.translations, line.translations),
           ts: line.ts,
+          receivedAt: now,
         };
         const next = [...prev.slice(0, -1), merged];
-        const cap = 200;
+        const cap = TRANSCRIPT_BUFFER_MAX_LINES;
         return next.length > cap ? next.slice(-cap) : next;
       }
 
       const next = [
         ...prev,
-        { ...line, id: crypto.randomUUID() },
+        { ...line, id: crypto.randomUUID(), receivedAt: now },
       ];
-      const cap = 200;
+      const cap = TRANSCRIPT_BUFFER_MAX_LINES;
       return next.length > cap ? next.slice(-cap) : next;
     });
   }, []);
