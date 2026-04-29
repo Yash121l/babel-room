@@ -23,6 +23,12 @@ Full Worker + static assets on a **single** port (no Vite): `cd apps/worker && n
 
 **Workers AI:** `wrangler dev --local` turns off [remote bindings](https://developers.cloudflare.com/workers/development-testing/#remote-bindings), which breaks the AI binding (`Binding AI needs to be run remotely`). Default `wrangler dev` (no `--local`) keeps D1/DO local while Workers AI calls the network.
 
+### Invite links and testing languages
+
+- **Copy invite link** in the room copies `/room/<code>`. Guests who open it get either your saved name/languages on this browser (`localStorage`) or a short **join** form (no more dead-end “start from home” when pasting a URL).
+- Home URL with **`?join=xxxxxxxx`** pre-fills the 8-character join field (e.g. share `http://localhost:5173/?join=abcd1234`).
+- **Real-time translation check:** use two profiles with **opposite** language pairs (e.g. Tab A: speak **English**, hear **Spanish**; Tab B or incognito: speak **Spanish**, hear **English**). Join the same room, allow the microphone on both, then speak from one side; the other should see transcript lines and hear **translated TTS** in their chosen “hear” language.
+
 ---
 
 Production-oriented **real-time multilingual voice** stack on Cloudflare: **Workers + Durable Objects** (WebSocket hibernation) + **Workers AI** (STT / translation / TTS) + **D1** + **R2** + **Workflows**, with a **React + Vite + Tailwind** UI deployed as **[static assets](https://developers.cloudflare.com/workers/static-assets/)** on the same Worker as `/api/*`.

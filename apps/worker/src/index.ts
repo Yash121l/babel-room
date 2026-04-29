@@ -10,6 +10,8 @@ import {
   insertParticipant,
   insertRoom,
   insertTranscriptSegment,
+  isParticipantInRoom,
+  listParticipantsForRoom,
   markRoomEnded,
 } from "./db";
 import { MAX_AUDIO_CHUNK_BYTES } from "./constants";
@@ -17,6 +19,8 @@ import { runAudioPipeline } from "./pipeline";
 import { sanitizeTranscriptText } from "./sanitize";
 import {
   audioChunkBodySchema,
+  devInjectTranslatedAudioBodySchema,
+  devInjectTranscriptBodySchema,
   joinRoomBodySchema,
   roomIdParamSchema,
 } from "./schemas";
@@ -26,6 +30,10 @@ export { RoomDO } from "./room";
 export { PostCallSummaryWorkflow } from "./workflows";
 
 const generateRoomId = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 8);
+
+function devToolsEnabled(env: Env): boolean {
+  return env.BABEL_DEV_TOOLS === "1";
+}
 
 function approxDecodedBase64Bytes(b64: string): number {
   const stripped = b64.replace(/=/g, "");
@@ -525,6 +533,223 @@ app.delete("/api/rooms/:roomId", async (c) => {
       }),
     );
     return structuredError(c, "INTERNAL", "Failed to end room", 500);
+  }
+});
+
+app.get("/api/rooms/:roomId/dev/participants", async (c) => {
+  if (!devToolsEnabled(c.env)) {
+    return structuredError(c, "NOT_FOUND", "Route not found", 404);
+  }
+  const requestId = c.get("requestId");
+  const startedAt = c.get("startedAt");
+  try {
+    const roomIdParse = roomIdParamSchema.safeParse(c.req.param("roomId"));
+    if (!roomIdParse.success) {
+      return structuredError(c, "INVALID_ROOM", "Invalid room id", 400);
+    }
+    const roomId = roomIdParse.data;
+    const room = await getRoomById(c.env.DB, roomId);
+    if (!room) {
+      return structuredError(c, "NOT_FOUND", "Room not found", 404);
+    }
+    const rows = await listParticipantsForRoom(c.env.DB, roomId);
+    const participants = rows.map((r) => ({
+      id: r.id,
+      displayName: r.display_name,
+      sourceLang: r.source_language,
+      targetLang: r.target_language,
+      joinedAt: r.joined_at,
+    }));
+    return c.json({ participants }, 200, {
+      "X-Request-Id": requestId,
+      "X-Pipeline-Duration-Ms": "0",
+    });
+  } catch (e) {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "dev_participants_failed",
+        requestId,
+        message: String(e),
+        durationMs: Date.now() - startedAt,
+      }),
+    );
+    return structuredError(c, "INTERNAL", "Failed to list participants", 500);
+  }
+});
+
+app.post("/api/rooms/:roomId/dev/inject-transcript", async (c) => {
+  if (!devToolsEnabled(c.env)) {
+    return structuredError(c, "NOT_FOUND", "Route not found", 404);
+  }
+  const requestId = c.get("requestId");
+  const startedAt = c.get("startedAt");
+  try {
+    const roomIdParse = roomIdParamSchema.safeParse(c.req.param("roomId"));
+    if (!roomIdParse.success) {
+      return structuredError(c, "INVALID_ROOM", "Invalid room id", 400);
+    }
+    const roomId = roomIdParse.data;
+
+    const room = await getRoomById(c.env.DB, roomId);
+    if (!room) {
+      return structuredError(c, "NOT_FOUND", "Room not found", 404);
+    }
+
+    const bodyUnknown = await c.req.json().catch(() => null);
+    const bodyParse = devInjectTranscriptBodySchema.safeParse(bodyUnknown);
+    if (!bodyParse.success) {
+      return structuredError(
+        c,
+        "INVALID_BODY",
+        bodyParse.error.message,
+        400,
+      );
+    }
+    const { participantId, segments } = bodyParse.data;
+
+    const ok = await isParticipantInRoom(c.env.DB, roomId, participantId);
+    if (!ok) {
+      return structuredError(c, "INVALID_PARTICIPANT", "Participant not in room", 400);
+    }
+
+    const stub = c.env.ROOM.get(c.env.ROOM.idFromName(roomId));
+    const now = Date.now();
+    let injected = 0;
+    for (const seg of segments) {
+      const safeText = sanitizeTranscriptText(seg.text);
+      if (safeText.length === 0) continue;
+      const segId = crypto.randomUUID();
+      const ts = now + injected;
+      injected += 1;
+      await insertTranscriptSegment(c.env.DB, {
+        id: segId,
+        roomId,
+        participantId,
+        sourceText: safeText,
+        sourceLanguage: seg.lang,
+        startedAt: ts,
+        durationMs: 0,
+      });
+      await stub.fetch(
+        doInternalRequest("/internal/broadcast-transcript", requestId, {
+          participantId,
+          text: safeText,
+          lang: seg.lang,
+          ts,
+        }),
+      );
+    }
+
+    if (injected === 0) {
+      return structuredError(
+        c,
+        "INVALID_BODY",
+        "All segments were empty after sanitization",
+        400,
+      );
+    }
+
+    return c.json({ success: true, injected }, 200, {
+      "X-Request-Id": requestId,
+      "X-Pipeline-Duration-Ms": "0",
+    });
+  } catch (e) {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "dev_inject_transcript_failed",
+        requestId,
+        message: String(e),
+        durationMs: Date.now() - startedAt,
+      }),
+    );
+    return structuredError(c, "INTERNAL", "Inject transcript failed", 500);
+  }
+});
+
+app.post("/api/rooms/:roomId/dev/inject-translated-audio", async (c) => {
+  if (!devToolsEnabled(c.env)) {
+    return structuredError(c, "NOT_FOUND", "Route not found", 404);
+  }
+  const requestId = c.get("requestId");
+  const startedAt = c.get("startedAt");
+  try {
+    const roomIdParse = roomIdParamSchema.safeParse(c.req.param("roomId"));
+    if (!roomIdParse.success) {
+      return structuredError(c, "INVALID_ROOM", "Invalid room id", 400);
+    }
+    const roomId = roomIdParse.data;
+
+    const room = await getRoomById(c.env.DB, roomId);
+    if (!room) {
+      return structuredError(c, "NOT_FOUND", "Room not found", 404);
+    }
+
+    const bodyUnknown = await c.req.json().catch(() => null);
+    const bodyParse = devInjectTranslatedAudioBodySchema.safeParse(bodyUnknown);
+    if (!bodyParse.success) {
+      return structuredError(
+        c,
+        "INVALID_BODY",
+        bodyParse.error.message,
+        400,
+      );
+    }
+    const { targetParticipantId, audioB64, lang } = bodyParse.data;
+
+    const inRoom = await isParticipantInRoom(
+      c.env.DB,
+      roomId,
+      targetParticipantId,
+    );
+    if (!inRoom) {
+      return structuredError(c, "INVALID_PARTICIPANT", "Participant not in room", 400);
+    }
+
+    const approxBytes = approxDecodedBase64Bytes(audioB64);
+    if (approxBytes > MAX_AUDIO_CHUNK_BYTES) {
+      return structuredError(c, "AUDIO_TOO_LARGE", "Audio payload too large", 413);
+    }
+
+    const stub = c.env.ROOM.get(c.env.ROOM.idFromName(roomId));
+    const res = await stub.fetch(
+      doInternalRequest("/internal/dev-send-translated-audio", requestId, {
+        targetParticipantId,
+        audioB64,
+        lang,
+      }),
+    );
+    if (!res.ok) {
+      const j = (await res.json().catch(() => null)) as {
+        reason?: string;
+      } | null;
+      if (res.status === 404 && j?.reason === "TARGET_OFFLINE") {
+        return structuredError(
+          c,
+          "TARGET_OFFLINE",
+          "Target participant has no active WebSocket",
+          404,
+        );
+      }
+      return structuredError(c, "INTERNAL", "Inject audio failed", 500);
+    }
+
+    return c.json({ success: true }, 200, {
+      "X-Request-Id": requestId,
+      "X-Pipeline-Duration-Ms": "0",
+    });
+  } catch (e) {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "dev_inject_audio_failed",
+        requestId,
+        message: String(e),
+        durationMs: Date.now() - startedAt,
+      }),
+    );
+    return structuredError(c, "INTERNAL", "Inject audio failed", 500);
   }
 });
 

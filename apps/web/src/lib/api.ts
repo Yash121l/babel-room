@@ -106,3 +106,65 @@ export async function getRoomSummary(
   }
   return (await res.json()) as RoomSummaryResponse;
 }
+
+export interface DevParticipantRow {
+  id: string;
+  displayName: string;
+  sourceLang: string;
+  targetLang: string;
+  joinedAt: number;
+}
+
+export async function devListParticipants(
+  roomId: string,
+): Promise<DevParticipantRow[]> {
+  const res = await fetch(`${API_BASE}/api/rooms/${roomId}/dev/participants`);
+  if (!res.ok) {
+    logger.error("dev_participants_failed", { status: res.status });
+    throw new Error("Dev participants unavailable (is BABEL_DEV_TOOLS=1 on the API?)");
+  }
+  const data = (await res.json()) as { participants: DevParticipantRow[] };
+  return data.participants;
+}
+
+export async function devInjectTranscript(
+  roomId: string,
+  participantId: string,
+  segments: { text: string; lang: Language }[],
+): Promise<{ injected: number }> {
+  const res = await fetch(
+    `${API_BASE}/api/rooms/${roomId}/dev/inject-transcript`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ participantId, segments }),
+    },
+  );
+  if (!res.ok) {
+    logger.error("dev_inject_transcript_failed", { status: res.status });
+    throw new Error("Inject transcript failed");
+  }
+  return (await res.json()) as { injected: number };
+}
+
+export async function devInjectTranslatedAudio(
+  roomId: string,
+  body: {
+    targetParticipantId: string;
+    audioB64: string;
+    lang: Language;
+  },
+): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/rooms/${roomId}/dev/inject-translated-audio`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!res.ok) {
+    logger.error("dev_inject_audio_failed", { status: res.status });
+    throw new Error("Inject translated audio failed (target must have WS open)");
+  }
+}

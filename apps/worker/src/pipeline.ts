@@ -134,7 +134,12 @@ export async function runAudioPipeline(
     }
 
     const transcript = (stt.text ?? "").trim();
-    const sourceLang = normalizeDetectedLanguage(stt.detected_language);
+    const detected = normalizeDetectedLanguage(stt.detected_language);
+    /** Prefer the participant's declared "language you speak" — Whisper's `detected_language` is often missing or defaults to English when decoding short clips. */
+    const sourceLang =
+      options.spokenLanguageHint != null
+        ? options.spokenLanguageHint
+        : detected;
 
     if (!transcript) {
       return {

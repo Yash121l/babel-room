@@ -11,7 +11,7 @@
     "db:setup:local": "npm run db:migrate:local && npm run db:migrate:local:test",
     "ports:free": "bash ../../scripts/free-dev-ports.sh",
     "predev": "npm run ensure-dist && npm run db:migrate:local",
-    "dev": "npx wrangler dev --port 8787",
+    "dev": "npx wrangler dev --port 8787 --var BABEL_DEV_TOOLS:1",
     "dev:api": "npm run db:migrate:local:test && npx wrangler dev --config wrangler.test.toml --port 8788",
     "deploy": "npx wrangler deploy",
     "types": "npx wrangler types",

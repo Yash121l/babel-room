@@ -41,6 +41,7 @@ export class PostCallSummaryWorkflow extends WorkflowEntrypoint<
       const result = (await this.env.AI.run(LLAMA_MODEL, {
         prompt: `Summarize this multilingual conference call transcript in English.
 Include: main topics, decisions made, action items.
+Format your answer in Markdown (use **bold** for section labels, lists where helpful).
 Transcript:\n${fullTranscript}`,
         max_tokens: 800,
       })) as { response?: string };

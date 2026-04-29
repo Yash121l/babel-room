@@ -43,3 +43,22 @@ export const pipelineBroadcastBodySchema = z.object({
     durationMs: z.number().nonnegative(),
   }),
 });
+
+export const devInjectTranscriptBodySchema = z.object({
+  participantId: participantIdSchema,
+  segments: z
+    .array(
+      z.object({
+        text: z.string().min(1).max(4000),
+        lang: languageSchema,
+      }),
+    )
+    .min(1)
+    .max(80),
+});
+
+export const devInjectTranslatedAudioBodySchema = z.object({
+  targetParticipantId: participantIdSchema,
+  audioB64: z.string().min(1).max(2_000_000),
+  lang: languageSchema,
+});

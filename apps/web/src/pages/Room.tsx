@@ -1,9 +1,17 @@
 import type { Language, WSMessageType } from "@babel-room/shared";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   AudioVisualizer,
   EndCallDialog,
+  LanguageSelector,
   LatencyIndicator,
   ParticipantGrid,
   TranscriptPanel,
@@ -11,6 +19,7 @@ import {
 import { useRoom, useTranscript, useWebRTC } from "../hooks";
 import { endRoom, joinRoom } from "../lib/api";
 import { logger } from "../lib/logger";
+import { loadRoomProfile, saveRoomProfile, type RoomJoinProfile } from "../lib/roomProfile";
 
 function base64ToUint8Array(b64: string): Uint8Array {
   const binary = atob(b64);
@@ -22,27 +31,45 @@ function base64ToUint8Array(b64: string): Uint8Array {
   return bytes;
 }
 
+/** Invite URL: opening it uses saved profile on this device or shows a short join form. */
 function joinUrlForRoom(roomId: string): string {
   const path = `/room/${roomId}`;
   if (typeof window === "undefined") return path;
   return `${window.location.origin}${path}`;
 }
 
+type LocationState = {
+  displayName?: string;
+  sourceLang?: Language;
+  targetLang?: Language;
+};
+
+function profileFromLocationState(state: unknown): RoomJoinProfile | null {
+  if (!state || typeof state !== "object") return null;
+  const s = state as LocationState;
+  const dn = typeof s.displayName === "string" ? s.displayName.trim() : "";
+  if (!dn || !s.sourceLang || !s.targetLang) return null;
+  return {
+    displayName: dn,
+    sourceLang: s.sourceLang,
+    targetLang: s.targetLang,
+  };
+}
+
 export function Room(): JSX.Element {
   const { roomId: roomIdParam } = useParams();
   const navigate = useNavigate();
-  const location = useLocation() as {
-    state?: {
-      displayName?: string;
-      sourceLang?: Language;
-      targetLang?: Language;
-    };
-  };
+  const location = useLocation();
 
   const roomId = roomIdParam ?? "";
   const [participantId, setParticipantId] = useState<string | null>(null);
   const [wsUrl, setWsUrl] = useState<string | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [showJoinForm, setShowJoinForm] = useState(false);
+  const [isJoining, setIsJoining] = useState(false);
+  const [formName, setFormName] = useState("");
+  const [formSourceLang, setFormSourceLang] = useState<Language>("en");
+  const [formTargetLang, setFormTargetLang] = useState<Language>("es");
   const [pipelineMs, setPipelineMs] = useState<number | null>(null);
   const [speakingIds, setSpeakingIds] = useState<Set<string>>(() => new Set());
   const [micSessionActive, setMicSessionActive] = useState(true);
@@ -52,6 +79,14 @@ export function Room(): JSX.Element {
   const [copyDone, setCopyDone] = useState(false);
   const playbackRef = useRef<AudioContext | null>(null);
   const speakingTimers = useRef<Map<string, number>>(new Map());
+  const joinKeyRef = useRef(0);
+
+  const resolvedProfile = useMemo((): RoomJoinProfile | null => {
+    const fromNav = profileFromLocationState(location.state);
+    if (fromNav) return fromNav;
+    if (typeof window === "undefined") return null;
+    return loadRoomProfile();
+  }, [location.state]);
 
   const { lines, addLine } = useTranscript();
 
@@ -134,33 +169,81 @@ export function Room(): JSX.Element {
     onBatchUploaded,
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (participantId && wsUrl) return;
+
+    setJoinError(null);
+    if (!roomId || roomId.length !== 8) {
+      setJoinError("Invalid room code.");
+      setShowJoinForm(true);
+      setIsJoining(false);
+      return;
+    }
+
+    const profile = resolvedProfile;
+    if (!profile) {
+      setFormName("");
+      setFormSourceLang("en");
+      setFormTargetLang("es");
+      setShowJoinForm(true);
+      setIsJoining(false);
+      return;
+    }
+
+    const joinKey = ++joinKeyRef.current;
+    setShowJoinForm(false);
+    setIsJoining(true);
+
     const run = async (): Promise<void> => {
-      if (!roomId || roomId.length !== 8) {
-        setJoinError("Invalid room.");
-        return;
-      }
-      const dn = location.state?.displayName;
-      const sl = location.state?.sourceLang;
-      const tl = location.state?.targetLang;
-      if (!dn || !sl || !tl) {
-        setJoinError("Start from the home page with your profile.");
-        return;
-      }
       try {
-        const res = await joinRoom(roomId, {
-          displayName: dn,
-          sourceLang: sl,
-          targetLang: tl,
-        });
+        saveRoomProfile(profile);
+        const res = await joinRoom(roomId, profile);
+        if (joinKey !== joinKeyRef.current) return;
         setParticipantId(res.participantId);
         setWsUrl(res.wsUrl);
+        setJoinError(null);
       } catch {
-        setJoinError("Could not join this room.");
+        if (joinKey !== joinKeyRef.current) return;
+        setJoinError("Could not join this room. It may be full, ended, or the code may be wrong.");
+        setShowJoinForm(true);
+        setFormName(profile.displayName);
+        setFormSourceLang(profile.sourceLang);
+        setFormTargetLang(profile.targetLang);
+      } finally {
+        if (joinKey === joinKeyRef.current) setIsJoining(false);
       }
     };
     void run();
-  }, [location.state, roomId]);
+  }, [roomId, resolvedProfile, participantId, wsUrl]);
+
+  const onSubmitJoinForm = useCallback(async (): Promise<void> => {
+    const dn = formName.trim();
+    if (!dn) {
+      setJoinError("Display name is required.");
+      return;
+    }
+    setJoinError(null);
+    setIsJoining(true);
+    const profile: RoomJoinProfile = {
+      displayName: dn,
+      sourceLang: formSourceLang,
+      targetLang: formTargetLang,
+    };
+    const joinKey = ++joinKeyRef.current;
+    try {
+      saveRoomProfile(profile);
+      const res = await joinRoom(roomId, profile);
+      if (joinKey !== joinKeyRef.current) return;
+      setParticipantId(res.participantId);
+      setWsUrl(res.wsUrl);
+      setShowJoinForm(false);
+    } catch {
+      if (joinKey !== joinKeyRef.current) return;
+      setJoinError("Could not join this room.");
+    } finally {
+      if (joinKey === joinKeyRef.current) setIsJoining(false);
+    }
+  }, [formName, formSourceLang, formTargetLang, roomId]);
 
   const participantNames = useMemo(() => {
     const m: Record<string, string> = {};
@@ -212,16 +295,76 @@ export function Room(): JSX.Element {
     try {
       await navigator.clipboard.writeText(url);
       setCopyDone(true);
-      window.setTimeout(() => setCopyDone(false), 2000);
+      window.setTimeout(() => setCopyDone(false), 2500);
     } catch {
       logger.error("clipboard_failed", {});
+      window.prompt("Copy this link:", url);
     }
   }, [roomId]);
 
-  if (joinError) {
+  if (showJoinForm && (!participantId || !wsUrl)) {
     return (
-      <div className="mx-auto max-w-lg px-4 py-16 text-center text-rose-400">
-        {joinError}
+      <div className="mx-auto flex max-w-lg flex-col gap-6 px-4 py-12">
+        <header>
+          <h1 className="text-2xl font-semibold text-white">Join room</h1>
+          <p className="mt-1 font-mono text-sm text-room-accent">{roomId}</p>
+          <p className="mt-3 text-sm text-room-muted">
+            Pasted a link? Choose the language you speak and the language you want
+            to hear from others. We remember this device&apos;s last choice next
+            time.
+          </p>
+        </header>
+
+        <div className="flex flex-col gap-4 rounded-2xl border border-slate-800 bg-room-panel p-6">
+          <label className="flex flex-col gap-1 text-sm" htmlFor="roomJoinName">
+            <span className="text-room-muted">Display name</span>
+            <input
+              id="roomJoinName"
+              className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 outline-none focus:border-room-accent"
+              value={formName}
+              onChange={(e) => setFormName(e.target.value)}
+              autoComplete="nickname"
+              disabled={isJoining}
+            />
+          </label>
+          <LanguageSelector
+            id="roomJoinSource"
+            label="Language you speak"
+            value={formSourceLang}
+            onChange={setFormSourceLang}
+          />
+          <LanguageSelector
+            id="roomJoinTarget"
+            label="Language you want to hear"
+            value={formTargetLang}
+            onChange={setFormTargetLang}
+          />
+          <p className="text-xs text-room-muted">
+            <strong className="text-slate-300">Testing translation:</strong> open a
+            second browser (or incognito), join the same room, set one side
+            English→Spanish and the other Spanish→English. When one speaks, the
+            other should hear translated TTS in their target language.
+          </p>
+          {joinError ? (
+            <p className="text-sm text-rose-400" role="alert">
+              {joinError}
+            </p>
+          ) : null}
+          <button
+            type="button"
+            className="rounded-lg bg-room-accent px-4 py-2 text-sm font-medium text-slate-950 hover:bg-sky-300 disabled:opacity-50"
+            disabled={isJoining}
+            onClick={() => void onSubmitJoinForm()}
+          >
+            {isJoining ? "Joining…" : "Join room"}
+          </button>
+          <Link
+            to="/"
+            className="text-center text-sm text-room-muted underline-offset-2 hover:text-room-accent hover:underline"
+          >
+            Back to home
+          </Link>
+        </div>
       </div>
     );
   }
@@ -270,10 +413,11 @@ export function Room(): JSX.Element {
           <div className="flex flex-wrap items-center gap-2 sm:justify-end">
             <button
               type="button"
+              title="Copies the room link. Guests can open it here or in another browser; if this device has no saved profile, they pick name and languages once."
               className="rounded-lg border border-slate-600 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-800 sm:text-sm"
               onClick={() => void onCopyLink()}
             >
-              {copyDone ? "Copied" : "Copy room link"}
+              {copyDone ? "Copied" : "Copy invite link"}
             </button>
             <LatencyIndicator pipelineMs={pipelineMs} />
             <button

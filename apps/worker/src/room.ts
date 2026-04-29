@@ -90,6 +90,9 @@ export class RoomDO extends DurableObject<Env> {
     if (url.pathname === "/internal/rate-limit-audio") {
       return this.handleRateLimitAudio(request);
     }
+    if (url.pathname === "/internal/dev-send-translated-audio") {
+      return this.handleDevSendTranslatedAudio(request);
+    }
 
     return new Response("Not found", { status: 404 });
   }
@@ -120,6 +123,51 @@ export class RoomDO extends DurableObject<Env> {
       text,
       lang: body.lang,
       ts: body.ts ?? Date.now(),
+    });
+
+    return Response.json({ ok: true });
+  }
+
+  private async handleDevSendTranslatedAudio(
+    request: Request,
+  ): Promise<Response> {
+    if (request.method !== "POST") {
+      return new Response("Method not allowed", { status: 405 });
+    }
+    let body: {
+      targetParticipantId?: string;
+      audioB64?: string;
+      lang?: Language;
+    };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return Response.json({ ok: false, reason: "INVALID_JSON" }, { status: 400 });
+    }
+    const targetParticipantId = body.targetParticipantId;
+    const audioB64 = body.audioB64;
+    const lang = body.lang;
+    if (!targetParticipantId || !audioB64 || !lang) {
+      return Response.json({ ok: false, reason: "INVALID_BODY" }, { status: 400 });
+    }
+
+    const sockets = this.ctx.getWebSockets();
+    const wsByParticipant = new Map<string, WebSocket>();
+    for (const ws of sockets) {
+      const tags = this.ctx.getTags(ws);
+      const pid = tags[0];
+      if (pid) wsByParticipant.set(pid, ws);
+    }
+    const ws = wsByParticipant.get(targetParticipantId);
+    if (!ws) {
+      return Response.json({ ok: false, reason: "TARGET_OFFLINE" }, { status: 404 });
+    }
+
+    this.sendToWebSocket(ws, {
+      type: "translated_audio",
+      targetParticipantId,
+      audioB64,
+      lang,
     });
 
     return Response.json({ ok: true });

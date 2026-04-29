@@ -9,6 +9,8 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 # Comma-separated origins, or empty / "*" for any origin (dev). Production: https://your-worker.workers.dev
 ALLOWED_ORIGINS = "babel-room-worker.yashlunawat-tech.workers.dev"
+# Leave empty on deploy so /api/.../dev/* routes stay disabled.
+BABEL_DEV_TOOLS = ""
 
 [observability]
 enabled = true

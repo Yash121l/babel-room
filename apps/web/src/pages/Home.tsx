@@ -1,18 +1,36 @@
 import type { Language } from "@babel-room/shared";
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { LanguageSelector } from "../components";
 import { createRoom } from "../lib/api";
 import { logger } from "../lib/logger";
+import { loadRoomProfile, saveRoomProfile } from "../lib/roomProfile";
 
 export function Home(): JSX.Element {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [displayName, setDisplayName] = useState("");
   const [sourceLang, setSourceLang] = useState<Language>("en");
   const [targetLang, setTargetLang] = useState<Language>("es");
   const [joinCode, setJoinCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const saved = loadRoomProfile();
+    if (saved) {
+      setDisplayName(saved.displayName);
+      setSourceLang(saved.sourceLang);
+      setTargetLang(saved.targetLang);
+    }
+  }, []);
+
+  useEffect(() => {
+    const raw = searchParams.get("join")?.trim().toLowerCase() ?? "";
+    if (raw.length === 8 && /^[a-z0-9]+$/.test(raw)) {
+      setJoinCode(raw);
+    }
+  }, [searchParams]);
 
   const onCreate = async (): Promise<void> => {
     setError(null);
@@ -23,9 +41,13 @@ export function Home(): JSX.Element {
     setBusy(true);
     try {
       const { roomId } = await createRoom();
-      navigate(`/room/${roomId}`, {
-        state: { displayName: displayName.trim(), sourceLang, targetLang },
-      });
+      const profile = {
+        displayName: displayName.trim(),
+        sourceLang,
+        targetLang,
+      };
+      saveRoomProfile(profile);
+      navigate(`/room/${roomId}`, { state: profile });
     } catch (e) {
       logger.error("create_room_ui", { message: String(e) });
       setError("Could not create room.");
@@ -45,9 +67,13 @@ export function Home(): JSX.Element {
       setError("Display name is required.");
       return;
     }
-    navigate(`/room/${code}`, {
-      state: { displayName: displayName.trim(), sourceLang, targetLang },
-    });
+    const profile = {
+      displayName: displayName.trim(),
+      sourceLang,
+      targetLang,
+    };
+    saveRoomProfile(profile);
+    navigate(`/room/${code}`, { state: profile });
   };
 
   return (
@@ -120,7 +146,9 @@ export function Home(): JSX.Element {
             />
           </label>
           <p className="mt-1 text-xs text-room-muted">
-            Use the 8-character code the host shared (letters and numbers).
+            Use the 8-character code the host shared, or open an invite link (
+            <code className="text-room-accent">?join=</code> on this page is
+            filled for you).
           </p>
           <button
             type="button"
@@ -131,6 +159,18 @@ export function Home(): JSX.Element {
           </button>
         </div>
       </div>
+
+      {import.meta.env.DEV ? (
+        <p className="text-center text-xs text-room-muted">
+          <Link
+            to="/dev/simulator"
+            className="underline-offset-2 hover:text-room-accent hover:underline"
+          >
+            Dev simulator
+          </Link>{" "}
+          (inject transcript / test TTS playback)
+        </p>
+      ) : null}
     </div>
   );
 }

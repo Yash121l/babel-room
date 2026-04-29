@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import { Link, useParams } from "react-router-dom";
 import { getRoomSummary } from "../lib/api";
 import { logger } from "../lib/logger";
@@ -112,8 +113,12 @@ export function RoomSummary(): JSX.Element {
               {segmentCount === 1 ? "" : "s"}.
             </p>
           ) : null}
-          <div className="whitespace-pre-wrap text-sm leading-relaxed text-slate-100">
-            {summary || "(No summary text.)"}
+          <div className="prose prose-invert prose-sm max-w-none prose-headings:text-slate-100 prose-p:text-slate-200 prose-strong:text-white prose-li:text-slate-200">
+            {summary ? (
+              <ReactMarkdown>{summary}</ReactMarkdown>
+            ) : (
+              <p className="text-slate-300">(No summary text.)</p>
+            )}
           </div>
         </article>
       ) : null}

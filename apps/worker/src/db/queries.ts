@@ -122,6 +122,43 @@ export async function getDistinctTargetLanguagesForRoom(
   return out;
 }
 
+export interface ParticipantListRow {
+  id: string;
+  display_name: string;
+  source_language: string;
+  target_language: string;
+  joined_at: number;
+}
+
+export async function listParticipantsForRoom(
+  db: D1Database,
+  roomId: string,
+): Promise<ParticipantListRow[]> {
+  const result = await db
+    .prepare(
+      `SELECT id, display_name, source_language, target_language, joined_at
+       FROM participants WHERE room_id = ? AND left_at IS NULL
+       ORDER BY joined_at ASC`,
+    )
+    .bind(roomId)
+    .all<ParticipantListRow>();
+  return result.results ?? [];
+}
+
+export async function isParticipantInRoom(
+  db: D1Database,
+  roomId: string,
+  participantId: string,
+): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT 1 AS ok FROM participants WHERE id = ? AND room_id = ? AND left_at IS NULL`,
+    )
+    .bind(participantId, roomId)
+    .first<{ ok: number }>();
+  return row != null;
+}
+
 export async function insertTranscriptSegment(
   db: D1Database,
   args: {
