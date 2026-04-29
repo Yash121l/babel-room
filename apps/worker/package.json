@@ -1,0 +1,34 @@
+{
+  "name": "babel-room-worker",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare": "npx wrangler types",
+    "ensure-dist": "node ../../scripts/ensure-web-dist.mjs",
+    "db:migrate:local": "npx wrangler d1 migrations apply babel-room-db --local",
+    "db:migrate:local:test": "npx wrangler d1 migrations apply babel-room-db --local --config wrangler.test.toml",
+    "db:setup:local": "npm run db:migrate:local && npm run db:migrate:local:test",
+    "ports:free": "bash ../../scripts/free-dev-ports.sh",
+    "predev": "npm run ensure-dist && npm run db:migrate:local",
+    "dev": "npx wrangler dev --port 8787",
+    "dev:api": "npm run db:migrate:local:test && npx wrangler dev --config wrangler.test.toml --port 8788",
+    "deploy": "npx wrangler deploy",
+    "types": "npx wrangler types",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@babel-room/shared": "file:../../packages/shared",
+    "hono": "^4.7.5",
+    "nanoid": "^5.1.5",
+    "zod": "^3.24.3"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.8.22",
+    "@types/node": "^22.14.1",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.2",
+    "wrangler": "^4.14.4"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "babel-room",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run db:setup:local -w babel-room-worker && concurrently -k -n wrangler,vite -c cyan,magenta \"npm run dev:api -w babel-room-worker\" \"npm run dev -w babel-room-web\"",
+    "dev:free": "npm run ports:free -w babel-room-worker && npm run dev",
+    "build": "npm run build -w babel-room-web",
+    "deploy": "npm run build && npm run deploy -w babel-room-worker",
+    "lint": "eslint . --max-warnings 0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "npm run test -w babel-room-worker"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "@eslint/js": "^9.25.0",
+    "eslint": "^9.25.0",
+    "eslint-config-prettier": "^10.1.2",
+    "globals": "^16.0.0",
+    "prettier": "^3.5.3",
+    "typescript-eslint": "^8.31.0"
+  }
+}

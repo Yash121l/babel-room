@@ -1,0 +1,40 @@
+# Vitest + local API-only dev (no static assets directory required).
+"$schema" = "../../node_modules/wrangler/config-schema.json"
+name = "babel-room-worker"
+main = "src/index.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+# Different from wrangler.toml (8787) so you can run `npm run dev` + `npm run dev:api` together (e.g. Vite + API).
+[dev]
+port = 8788
+
+[ai]
+binding = "AI"
+remote = true
+
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "RoomDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RoomDO"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "babel-room-db"
+database_id = "00000000-0000-0000-0000-000000000001"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "TRANSCRIPTS"
+bucket_name = "babel-room-transcripts"
+
+[[workflows]]
+name = "babel-room-post-call-summary"
+binding = "SUMMARY_WORKFLOW"
+class_name = "PostCallSummaryWorkflow"
