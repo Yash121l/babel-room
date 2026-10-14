@@ -2,6 +2,7 @@ import type { Language } from "@babel-room/shared";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { LanguageSelector } from "../components";
+import { track } from "../lib/analytics";
 import { createRoom } from "../lib/api";
 import { logger } from "../lib/logger";
 import { loadRoomProfile, saveRoomProfile } from "../lib/roomProfile";
@@ -42,6 +43,7 @@ export function Home(): JSX.Element {
       const { roomId } = await createRoom();
       const profile = { displayName: displayName.trim(), sourceLang, targetLang };
       saveRoomProfile(profile);
+      track("room_created", { room_id: roomId, source_lang: sourceLang, target_lang: targetLang });
       navigate(`/room/${roomId}`, { state: profile });
     } catch (e) {
       logger.error("create_room_ui", { message: String(e) });

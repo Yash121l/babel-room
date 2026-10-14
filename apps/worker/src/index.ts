@@ -29,6 +29,7 @@ import {
   roomIdParamSchema,
 } from "./schemas";
 import type { AppEnv } from "./middleware";
+import { isPostHogProxyPath, proxyPostHog } from "./posthogProxy";
 import { requestContextMiddleware, structuredError } from "./middleware";
 export { RoomDO } from "./room";
 export { PostCallSummaryWorkflow } from "./workflows";
@@ -867,6 +868,11 @@ app.notFound((c) => structuredError(c, "NOT_FOUND", "Route not found", 404));
 
 export default {
   fetch: (request: Request, env: Env, ctx: ExecutionContext) => {
+    if (isPostHogProxyPath(new URL(request.url).pathname)) {
+      return proxyPostHog(request).catch(
+        () => new Response("PostHog proxy error", { status: 502 }),
+      );
+    }
     return Promise.resolve(app.fetch(request, env, ctx)).catch((e: unknown) => {
       const requestId = crypto.randomUUID();
       console.error(

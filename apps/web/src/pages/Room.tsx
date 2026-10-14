@@ -24,6 +24,7 @@ import {
   useTranscript,
   useWebRTC,
 } from "../hooks";
+import { track } from "../lib/analytics";
 import { endRoom, fetchWebRtcIceConfig, joinRoom } from "../lib/api";
 import { logger } from "../lib/logger";
 import {
@@ -323,6 +324,7 @@ export function Room(): JSX.Element {
   const [iceServers, setIceServers] = useState<RTCIceServer[]>(() => parseViteWebRtcIceServers());
   const speakingTimers = useRef<Map<string, number>>(new Map());
   const joinKeyRef = useRef(0);
+  const joinedAtRef = useRef<number | null>(null);
 
   const peerVoiceEnabled = listeningMode !== "ai";
   const translationTtsEnabled = listeningMode !== "peer";
@@ -493,8 +495,11 @@ export function Room(): JSX.Element {
         setParticipantId(res.participantId); setWsUrl(res.wsUrl); setIsRoomHost(res.isRoomHost === true);
         try { sessionStorage.setItem(`babel-room:${roomId}:participantId`, res.participantId); } catch { /* ignore */ }
         setJoinError(null);
+        joinedAtRef.current = Date.now();
+        track("room_joined", { room_id: roomId, source_lang: profile.sourceLang, target_lang: profile.targetLang, is_host: res.isRoomHost === true, via: "auto" });
       } catch {
         if (joinKey !== joinKeyRef.current) return;
+        track("room_join_failed", { room_id: roomId, via: "auto" });
         setJoinError("Could not join this room. It may be full, ended, or the code may be wrong.");
         setShowJoinForm(true);
         setFormName(profile.displayName); setFormSourceLang(profile.sourceLang); setFormTargetLang(profile.targetLang);
@@ -516,8 +521,11 @@ export function Room(): JSX.Element {
       setParticipantId(res.participantId); setWsUrl(res.wsUrl); setIsRoomHost(res.isRoomHost === true);
       try { sessionStorage.setItem(`babel-room:${roomId}:participantId`, res.participantId); } catch { /* ignore */ }
       setShowJoinForm(false);
+      joinedAtRef.current = Date.now();
+      track("room_joined", { room_id: roomId, source_lang: profile.sourceLang, target_lang: profile.targetLang, is_host: res.isRoomHost === true, via: "form" });
     } catch {
       if (joinKey !== joinKeyRef.current) return;
+      track("room_join_failed", { room_id: roomId, via: "form" });
       setJoinError("Could not join this room.");
     } finally { if (joinKey === joinKeyRef.current) setIsJoining(false); }
   }, [formName, formSourceLang, formTargetLang, roomId]);
@@ -545,24 +553,30 @@ export function Room(): JSX.Element {
     setEndCallError(null); setEndCallBusy(true);
     try {
       await endRoom(roomId, participantId);
+      track("call_ended", {
+        room_id: roomId,
+        participant_count: Object.keys(participants).length,
+        duration_s: joinedAtRef.current ? Math.round((Date.now() - joinedAtRef.current) / 1000) : null,
+      });
       setMicSessionActive(false);
       await stopPlayback();
       setEndDialogOpen(false);
       navigate(`/room/${roomId}/summary`, { state: { participantId } });
     } catch { setEndCallError("Could not end the call. Try again."); }
     finally { setEndCallBusy(false); }
-  }, [navigate, participantId, roomId, stopPlayback]);
+  }, [navigate, participantId, participants, roomId, stopPlayback]);
 
   const onCopyLink = useCallback(async (): Promise<void> => {
     const url = joinUrlForRoom(roomId);
     try {
       await navigator.clipboard.writeText(url);
       setCopyDone(true); window.setTimeout(() => setCopyDone(false), 2500);
+      track("invite_link_copied", { room_id: roomId, is_host: isRoomHost });
     } catch {
       logger.error("clipboard_failed", {});
       window.prompt("Copy this link:", url);
     }
-  }, [roomId]);
+  }, [isRoomHost, roomId]);
 
   /* ── Show join form ─────────────────────────── */
   if (showJoinForm && (!participantId || !wsUrl)) {

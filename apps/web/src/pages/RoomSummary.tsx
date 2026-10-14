@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { Link, useLocation, useParams } from "react-router-dom";
+import { track } from "../lib/analytics";
 import { getRoomSummary } from "../lib/api";
 import { logger } from "../lib/logger";
 
@@ -99,6 +100,7 @@ export function RoomSummary(): JSX.Element {
           stop();
           setSummary(res.summary);
           setSegmentCount(res.segmentCount);
+          track("summary_viewed", { room_id: roomId, segment_count: res.segmentCount, polls: attempts });
           setLoadError(null);
         }
       } catch (e) {
@@ -125,12 +127,13 @@ export function RoomSummary(): JSX.Element {
     if (!summary) return;
     try {
       await navigator.clipboard.writeText(summary);
+      track("summary_copied", { room_id: roomId, summary_chars: summary.length });
       setCopyDone(true);
       window.setTimeout(() => setCopyDone(false), 2000);
     } catch {
       setCopyDone(false);
     }
-  }, [summary]);
+  }, [roomId, summary]);
 
   if (!roomId || roomId.length !== 8) {
     return (

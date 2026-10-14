@@ -52,9 +52,9 @@ binding = "SUMMARY_WORKFLOW"
 class_name = "PostCallSummaryWorkflow"
 
 # Vite build output — run `npm run build -w babel-room-web` before deploy (see root "deploy" script).
-# run_worker_first: only /api/* hits the Worker; SPA routes are served from assets + not_found_handling.
+# run_worker_first: only /api/* (and /ingest/*, the PostHog reverse proxy) hits the Worker; SPA routes are served from assets + not_found_handling.
 # Optional later: Cloudflare Realtime / RealtimeKit (SFU) — add bindings + implement `src/realtime.ts`.
 [assets]
 directory = "../web/dist"
 not_found_handling = "single-page-application"
-run_worker_first = ["/api/*"]
+run_worker_first = ["/api/*", "/ingest/*"]
